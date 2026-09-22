@@ -13,8 +13,8 @@
 // the plugin on stdio only.
 //
 // The smallest plugin is a capability handler handed to Serve, a
-// DNS01Handler, NotifyHandler, ProbeHandler, MCPHandler, StorageHandler or
-// DeployHandler:
+// DNS01Handler, NotifyHandler, ProbeHandler, MCPHandler, StorageHandler,
+// DeployHandler, BlocklistHandler or DiscoveryHandler:
 //
 //	func main() {
 //		sdk.Serve(sdk.Plugin{DNS01: &myHandler{}})
@@ -79,6 +79,12 @@ type Plugin struct {
 	// Deploy serves the cert.deploy capability. Nil disables it.
 	Deploy DeployHandler
 
+	// Blocklist serves the security.blocklist capability. Nil disables it.
+	Blocklist BlocklistHandler
+
+	// Discovery serves the upstream.discovery capability. Nil disables it.
+	Discovery DiscoveryHandler
+
 	// Configure receives the settings map on plugin.configure. Optional.
 	Configure func(ctx context.Context, settings map[string]any) error
 
@@ -119,6 +125,12 @@ func (p Plugin) capabilities() []string {
 	}
 	if p.Deploy != nil {
 		caps = append(caps, protocol.CapabilityCertDeploy)
+	}
+	if p.Blocklist != nil {
+		caps = append(caps, protocol.CapabilitySecurityBlocklist)
+	}
+	if p.Discovery != nil {
+		caps = append(caps, protocol.CapabilityUpstreamDiscovery)
 	}
 	return caps
 }
@@ -292,6 +304,12 @@ func (rt *runtime) register() {
 	}
 	if rt.plugin.Deploy != nil {
 		rt.registerDeploy()
+	}
+	if rt.plugin.Blocklist != nil {
+		rt.registerBlocklist()
+	}
+	if rt.plugin.Discovery != nil {
+		rt.registerDiscovery()
 	}
 
 	for name, h := range rt.plugin.Methods {

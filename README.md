@@ -86,6 +86,8 @@ the derived list). The manifest block of each capability is described in the
 | `MCP` | `mcp` | `mcp.call` | `MCPHandler`, or the ready-made `MCPTools` map |
 | `Storage` | `storage` | `storage.put`, `storage.get`, `storage.list`, `storage.delete`, optional `storage.validate` | `StorageHandler`, plus `StorageValidator` |
 | `Deploy` | `cert.deploy` | `deploy.push`, optional `deploy.validate` | `DeployHandler`, plus `DeployValidator` |
+| `Blocklist` | `security.blocklist` | `blocklist.fetch` | `BlocklistHandler` |
+| `Discovery` | `upstream.discovery` | `discovery.resolve` | `DiscoveryHandler` |
 
 An optional method the handler does not implement answers `-32002`
 (Unsupported), and the host falls back or treats it as "no opinion".
@@ -238,13 +240,69 @@ func (cdn) Push(ctx context.Context, req sdk.DeployRequest) (string, error) {
 }
 ```
 
+### Blocklists
+
+The host fetches every source a person configured from the manifest's
+`blocklist` block on its refresh interval and writes the entries as nginx
+`deny` rules to a file the person includes where the list should apply.
+Return the complete list every time, as addresses or CIDR networks
+(`sdk.Deny` builds an entry); the host validates each one and drops the
+rest. An empty list denies nothing, so when the source cannot be read return
+an error and the host keeps the list it has. `TTLSeconds` asks for an
+earlier refresh. The manifest must request the `network` permission.
+
+```go
+type feed struct{}
+
+func (feed) Fetch(ctx context.Context, req sdk.BlocklistRequest) (sdk.BlocklistResult, error) {
+	key := req.Config["api_key"]
+	if key == "" {
+		return sdk.BlocklistResult{}, sdk.InvalidConfig("api_key", "api_key is required")
+	}
+	// Download the list with key here.
+	return sdk.BlocklistResult{
+		Entries:    []sdk.BlocklistEntry{sdk.Deny("203.0.113.0/24", "botnet")},
+		TTLSeconds: 900,
+	}, nil
+}
+```
+
+### Service discovery
+
+The host resolves every upstream a person bound to a service of one of the
+manifest's `discovery` providers on its refresh interval and writes the
+servers as an nginx `upstream` block. Return every server of `req.Service`
+(`sdk.Target` builds one with weight 1): an IP address or a host name, a port
+and a weight. Return `sdk.UnknownService` for a service the provider does
+not know and any other error when the provider cannot be reached; the host
+then keeps the servers it has. The manifest must request the `network`
+permission.
+
+```go
+type registry struct{}
+
+func (registry) Resolve(ctx context.Context, req sdk.DiscoveryRequest) (sdk.DiscoveryResult, error) {
+	if req.Config["address"] == "" {
+		return sdk.DiscoveryResult{}, sdk.InvalidConfig("address", "address is required")
+	}
+	// Look req.Service up in the registry here.
+	return sdk.DiscoveryResult{Targets: []sdk.DiscoveryTarget{sdk.Target("10.0.1.12", 8080)}}, nil
+}
+```
+
+### Content plugins
+
+Config templates and translation files need no process and no SDK: declare
+them in the manifest's `content` block and ship the files in the package.
+See `spec/17-content-plugins.md` of the specification.
+
 ## Transports
 
 stdio is always served. On top of it the SDK serves the same handlers over
 gRPC by default and advertises it in the `plugin.initialize` reply
 (`transports: ["stdio", "grpc"]`), so the host can send capability calls
 (`dns01.*`, `http.handle`, `notify.*`, `probe.check`, `mcp.call`,
-`storage.*`, `deploy.*`) there. Lifecycle methods, `host.*` calls, host log
+`storage.*`, `deploy.*`, `blocklist.fetch`, `discovery.resolve`) there. Lifecycle methods, `host.*` calls, host log
 lines and notifications stay on stdio. Nothing changes for your handlers: a
 gRPC call is decoded into the same JSON params and runs the same handler, and
 a returned `*protocol.Error` reaches the host with the same code, message and
@@ -291,8 +349,8 @@ proto describes.
 `pb` is a verbatim copy of the spec repository's generated `gen/go` package:
 message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name` and
 `notification` options, and gRPC clients and servers for the `Plugin`,
-`Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP`, `Storage`, `Deploy` and
-`Events` services. The plugin runtime in this
+`Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP`, `Storage`, `Deploy`,
+`Blocklist`, `Discovery` and `Events` services. The plugin runtime in this
 module keeps using the hand-written `protocol` types; `pb` is there for
 reflection, for gRPC and for code that prefers generated types. The gRPC
 transport resolves every call through the descriptors in `pb`, so a new rpc

@@ -368,6 +368,64 @@ func TestGRPCCarriesStorageSizesAsDoubles(t *testing.T) {
 	h.stop(t)
 }
 
+// listFeed answers blocklist.fetch with one entry.
+type listFeed struct{}
+
+func (listFeed) Fetch(_ context.Context, req BlocklistRequest) (BlocklistResult, error) {
+	if req.Config["api_key"] == "" {
+		return BlocklistResult{}, InvalidConfig("api_key", "api_key is required")
+	}
+	return BlocklistResult{Entries: []BlocklistEntry{Deny("203.0.113.0/24", "botnet")}, TTLSeconds: 60}, nil
+}
+
+// oneService answers discovery.resolve with one server.
+type oneService struct{}
+
+func (oneService) Resolve(_ context.Context, req DiscoveryRequest) (DiscoveryResult, error) {
+	return DiscoveryResult{Targets: []DiscoveryTarget{Target("10.0.0.5", 8080)}}, nil
+}
+
+func TestGRPCServesBlocklistAndDiscoveryCalls(t *testing.T) {
+	h := newGRPCHarness(t, Plugin{Blocklist: listFeed{}, Discovery: oneService{}}, shortTempDir(t), withGRPCNetwork("unix"))
+
+	conn := h.dial(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := invoke(ctx, conn, "/nginxui.plugin.v1.Blocklist/Fetch", &pluginv1.BlocklistFetchRequest{
+		Source: "threatfeed", Config: map[string]string{"api_key": "k"},
+	})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	var fetched pluginv1.BlocklistFetchResponse
+	if err = proto.Unmarshal(out, &fetched); err != nil {
+		t.Fatal(err)
+	}
+	if len(fetched.GetEntries()) != 1 || fetched.GetEntries()[0].GetCidr() != "203.0.113.0/24" || fetched.GetTtlSeconds() != 60 {
+		t.Fatalf("fetch = %v", &fetched)
+	}
+
+	_, err = invoke(ctx, conn, "/nginxui.plugin.v1.Blocklist/Fetch", &pluginv1.BlocklistFetchRequest{Source: "threatfeed"})
+	if _, pe := pluginErrorOf(t, err); pe.GetCode() != protocol.CodeInvalidConfig {
+		t.Fatalf("empty config: %v", pe)
+	}
+
+	out, err = invoke(ctx, conn, "/nginxui.plugin.v1.Discovery/Resolve", &pluginv1.DiscoveryResolveRequest{Provider: "registry", Service: "api"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	var resolved pluginv1.DiscoveryResolveResponse
+	if err = proto.Unmarshal(out, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.GetTargets()) != 1 || resolved.GetTargets()[0].GetPort() != 8080 || resolved.GetTargets()[0].GetWeight() != 1 {
+		t.Fatalf("resolve = %v", &resolved)
+	}
+
+	h.stop(t)
+}
+
 func TestGRPCSocketFallsBackForALongDataDir(t *testing.T) {
 	base := shortTempDir(t)
 	dataDir := filepath.Join(base, strings.Repeat("d", 120))
@@ -536,6 +594,9 @@ func TestRPCIndexCoversTheContract(t *testing.T) {
 		"/nginxui.plugin.v1.Plugin/Ping":   protocol.MethodPing,
 		"/nginxui.plugin.v1.Events/On":     protocol.MethodEventsOn,
 		"/nginxui.plugin.v1.Host/KVGet":    protocol.MethodHostKVGet,
+
+		"/nginxui.plugin.v1.Blocklist/Fetch":   protocol.MethodBlocklistFetch,
+		"/nginxui.plugin.v1.Discovery/Resolve": protocol.MethodDiscoveryResolve,
 	} {
 		rpc, ok := index[full]
 		if !ok || rpc.name != want {
