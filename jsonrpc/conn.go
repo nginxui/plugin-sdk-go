@@ -96,10 +96,17 @@ func (c *Conn) Handle(method string, h Handler) {
 
 // Handled reports whether a handler is registered for method.
 func (c *Conn) Handled(method string) bool {
+	_, ok := c.Handler(method)
+	return ok
+}
+
+// Handler returns the handler registered for method. Other transports use it
+// to serve a method exactly as this connection would.
+func (c *Conn) Handler(method string) (Handler, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	_, ok := c.handlers[method]
-	return ok
+	h, ok := c.handlers[method]
+	return h, ok
 }
 
 // Done is closed when the connection is closed.

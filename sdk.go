@@ -6,6 +6,12 @@
 // every human readable line must go to stderr; the SDK logger does that for
 // you.
 //
+// By default the SDK also serves the same handlers over gRPC on a Unix socket
+// in the data directory (a loopback port with a bearer token on Windows) and
+// advertises it in the plugin.initialize reply, so the host can send
+// capability calls there. WithoutGRPC or NGINX_UI_PLUGIN_DISABLE_GRPC=1 keep
+// the plugin on stdio only.
+//
 // The smallest plugin is a DNS01Handler handed to Serve:
 //
 //	func main() {
@@ -86,11 +92,11 @@ func (p Plugin) capabilities() []string {
 
 // Serve runs the plugin on stdin/stdout and never returns: it calls os.Exit
 // once the host asked the process to stop, stdin ended or a signal arrived.
-func Serve(p Plugin) {
+func Serve(p Plugin, opts ...Option) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := Run(ctx, p, os.Stdin, os.Stdout); err != nil {
+	if err := Run(ctx, p, os.Stdin, os.Stdout, opts...); err != nil {
 		Logger.Errorf("plugin stopped: %v", err)
 		os.Exit(1)
 	}
@@ -99,12 +105,14 @@ func Serve(p Plugin) {
 
 // Run serves the plugin over r and w and returns when the host asked the
 // process to stop, r ended or ctx was cancelled. It is the testable core of
-// Serve and installs no signal handler.
-func Run(ctx context.Context, p Plugin, r io.Reader, w io.Writer) error {
+// Serve and installs no signal handler. The gRPC transport, when enabled, is
+// started on plugin.initialize and stopped before Run returns.
+func Run(ctx context.Context, p Plugin, r io.Reader, w io.Writer, opts ...Option) error {
 	conn := jsonrpc.NewConn(r, w)
 
 	rt := &runtime{
 		plugin: p,
+		opts:   newOptions(opts),
 		conn:   conn,
 		host:   newHost(conn, envInfo()),
 		exitCh: make(chan struct{}),
@@ -112,6 +120,7 @@ func Run(ctx context.Context, p Plugin, r io.Reader, w io.Writer) error {
 
 	currentHost.Store(rt.host)
 	defer currentHost.CompareAndSwap(rt.host, nil)
+	defer rt.stopGRPC()
 
 	rt.register()
 
@@ -151,8 +160,13 @@ func envInfo() Info {
 // runtime wires one Plugin onto one connection.
 type runtime struct {
 	plugin Plugin
+	opts   options
 	conn   *jsonrpc.Conn
 	host   *Host
+
+	// grpcMu guards grpc, the optional second transport.
+	grpcMu sync.Mutex
+	grpc   *grpcTransport
 
 	exitOnce sync.Once
 	exitCh   chan struct{}
@@ -262,11 +276,48 @@ func (rt *runtime) onInitialize(_ context.Context, raw json.RawMessage) (any, er
 
 	rt.host.setHandshake(params)
 
-	return protocol.InitializeResult{
+	res := protocol.InitializeResult{
 		APIVersion:   protocol.APIVersion,
 		Capabilities: rt.plugin.capabilities(),
 		Transports:   []string{protocol.TransportStdio},
-	}, nil
+	}
+	if t := rt.startGRPC(); t != nil {
+		t.advertise(&res)
+	}
+	return res, nil
+}
+
+// startGRPC starts the gRPC transport once. It returns nil when gRPC is
+// disabled or could not start, in which case the plugin stays on stdio.
+func (rt *runtime) startGRPC() *grpcTransport {
+	if rt.opts.disableGRPC {
+		return nil
+	}
+
+	rt.grpcMu.Lock()
+	defer rt.grpcMu.Unlock()
+	if rt.grpc != nil {
+		return rt.grpc
+	}
+
+	t, err := startGRPC(rt, rt.opts.grpcNetwork)
+	if err != nil {
+		Logger.Warnf("gRPC transport unavailable, serving stdio only: %v", err)
+		return nil
+	}
+	rt.grpc = t
+	return t
+}
+
+// stopGRPC stops the gRPC transport and removes its socket.
+func (rt *runtime) stopGRPC() {
+	rt.grpcMu.Lock()
+	t := rt.grpc
+	rt.grpc = nil
+	rt.grpcMu.Unlock()
+	if t != nil {
+		t.stop()
+	}
 }
 
 // onInitialized is a notification: its return values are never sent.

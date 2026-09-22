@@ -67,7 +67,39 @@ func main() {
 `sdk.Serve` blocks: it registers the lifecycle methods, wires the capability
 methods your handler implements, and exits on `plugin.exit`, on end of stdin
 or on SIGINT/SIGTERM. Use `sdk.Run(ctx, plugin, r, w)` in tests to drive the
-same wiring over an in-memory pipe.
+same wiring over an in-memory pipe. Both accept options, see
+[Transports](#transports).
+
+## Transports
+
+stdio is always served. On top of it the SDK serves the same handlers over
+gRPC by default and advertises it in the `plugin.initialize` reply
+(`transports: ["stdio", "grpc"]`), so the host can send capability calls
+(`dns01.*`, `http.handle`) there. Lifecycle methods, `host.*` calls, host log
+lines and notifications stay on stdio. Nothing changes for your handlers: a
+gRPC call is decoded into the same JSON params and runs the same handler, and
+a returned `*protocol.Error` reaches the host with the same code, message and
+data on either transport.
+
+* On Linux and macOS the server listens on the Unix socket
+  `$NGINX_UI_PLUGIN_DATA_DIR/rpc.sock`. When that path is longer than the
+  platform allows (103 bytes on macOS and the BSDs, 107 on Linux) or the data
+  directory is unusable, the SDK uses a private directory under the system
+  temp dir instead. The path is always reported in `rpc_socket`, and the
+  socket is removed when the plugin exits.
+* On Windows it listens on a loopback TCP port, reported in `rpc_port`
+  together with a random `rpc_token`. Calls without the header
+  `authorization: Bearer <rpc_token>` are rejected.
+
+To stay on stdio only, pass `sdk.WithoutGRPC()` to `Serve` or `Run`, or set
+`NGINX_UI_PLUGIN_DISABLE_GRPC=1` in the plugin environment:
+
+```go
+sdk.Serve(sdk.Plugin{DNS01: provider{}}, sdk.WithoutGRPC())
+```
+
+When the listener cannot be opened the SDK logs a warning and advertises
+stdio only; the host never depends on gRPC being present.
 
 ## Packages
 
@@ -92,7 +124,9 @@ message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name` and
 `notification` options, and gRPC clients and servers for the `Plugin`,
 `Host`, `DNS01`, `HTTP` and `Events` services. The plugin runtime in this
 module keeps using the hand-written `protocol` types; `pb` is there for
-reflection, for gRPC and for code that prefers generated types.
+reflection, for gRPC and for code that prefers generated types. The gRPC
+transport resolves every call through the descriptors in `pb`, so a new rpc
+in the contract is served as soon as `pb` is updated and a handler exists.
 `protocol/alignment_test.go` fails when a `protocol` type drifts from its
 proto message, when a method constant has no rpc, or when an error code
 differs from the `ErrorCode` enum.
@@ -140,6 +174,12 @@ Once `plugin.initialized` arrived, `sdk.HostFromContext(ctx)` (or
 the host answers `-32001`. `Settings()` returns the latest settings map and
 `Info()` the plugin id, data directory and host information.
 
+A cron entry, from the manifest or from `CronRegister`, names a method of the
+plugin. When it fires, the host calls that method as an ordinary request with
+params `{"type": "<cron id>", "ts": <unix seconds>}` and waits for the reply,
+so register the handler under `Plugin.Methods`. Cron invocations do not go
+through `events.on`.
+
 ## Environment
 
 | Variable | Meaning |
@@ -148,6 +188,7 @@ the host answers `-32001`. `Settings()` returns the latest settings map and
 | `NGINX_UI_PLUGIN_API_VERSION` | The protocol version the host speaks |
 | `NGINX_UI_PLUGIN_DATA_DIR` | The only directory the plugin may write to |
 | `NGINX_UI_VERSION` | The host version |
+| `NGINX_UI_PLUGIN_DISABLE_GRPC` | Set to `1` to serve stdio only, like `sdk.WithoutGRPC()` |
 
 ## License
 
