@@ -12,7 +12,8 @@
 // capability calls there. WithoutGRPC or NGINX_UI_PLUGIN_DISABLE_GRPC=1 keep
 // the plugin on stdio only.
 //
-// The smallest plugin is a DNS01Handler handed to Serve:
+// The smallest plugin is a capability handler handed to Serve, a
+// DNS01Handler, NotifyHandler, ProbeHandler or MCPHandler:
 //
 //	func main() {
 //		sdk.Serve(sdk.Plugin{DNS01: &myHandler{}})
@@ -61,6 +62,16 @@ type Plugin struct {
 	// DNS01 serves the dns01 capability. Nil disables it.
 	DNS01 DNS01Handler
 
+	// Notify serves the notify capability. Nil disables it.
+	Notify NotifyHandler
+
+	// Probe serves the probe capability. Nil disables it.
+	Probe ProbeHandler
+
+	// MCP serves the mcp capability. Nil disables it. MCPTools is the
+	// ready-made handler that dispatches by tool name.
+	MCP MCPHandler
+
 	// Configure receives the settings map on plugin.configure. Optional.
 	Configure func(ctx context.Context, settings map[string]any) error
 
@@ -86,6 +97,15 @@ func (p Plugin) capabilities() []string {
 	caps := []string{}
 	if p.DNS01 != nil {
 		caps = append(caps, protocol.CapabilityDNS01)
+	}
+	if p.Notify != nil {
+		caps = append(caps, protocol.CapabilityNotify)
+	}
+	if p.Probe != nil {
+		caps = append(caps, protocol.CapabilityProbe)
+	}
+	if p.MCP != nil {
+		caps = append(caps, protocol.CapabilityMCP)
 	}
 	return caps
 }
@@ -243,6 +263,16 @@ func (rt *runtime) register() {
 		} else {
 			rt.conn.Handle(protocol.MethodDNS01Check, unsupported(protocol.MethodDNS01Check))
 		}
+	}
+
+	if rt.plugin.Notify != nil {
+		rt.registerNotify()
+	}
+	if rt.plugin.Probe != nil {
+		rt.registerProbe()
+	}
+	if rt.plugin.MCP != nil {
+		rt.registerMCP()
 	}
 
 	for name, h := range rt.plugin.Methods {

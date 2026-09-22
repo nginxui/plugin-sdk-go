@@ -70,12 +70,107 @@ or on SIGINT/SIGTERM. Use `sdk.Run(ctx, plugin, r, w)` in tests to drive the
 same wiring over an in-memory pipe. Both accept options, see
 [Transports](#transports).
 
+## Capabilities
+
+Each capability is one field of `sdk.Plugin`. Setting it wires the methods of
+the capability and adds its name to the `capabilities` the plugin reports in
+the handshake, which must match the manifest (`Plugin.Capabilities` overrides
+the derived list). The manifest block of each capability is described in the
+[specification](https://github.com/0xJacky/nginx-ui-plugin-spec).
+
+| Field | Capability | Methods | Handler |
+| --- | --- | --- | --- |
+| `DNS01` | `dns01` | `dns01.present`, `dns01.cleanup`, optional `dns01.validate`, `dns01.options`, `dns01.check` | `DNS01Handler`, plus `DNS01Validator`, `DNS01OptionsProvider`, `DNS01Checker` |
+| `Notify` | `notify` | `notify.send`, optional `notify.validate` | `NotifyHandler`, plus `NotifyValidator` |
+| `Probe` | `probe` | `probe.check` | `ProbeHandler` |
+| `MCP` | `mcp` | `mcp.call` | `MCPHandler`, or the ready-made `MCPTools` map |
+
+An optional method the handler does not implement answers `-32002`
+(Unsupported), and the host falls back or treats it as "no opinion".
+
+### Notification channels
+
+The host offers every channel of the manifest's `notify` block next to its
+built-in notification channels and calls `Send` whenever a notification is
+routed to one. `req.Config` holds the values of the channel form, `req.Title`
+and `req.Content` are already translated plain text, and `req.Severity` is
+`info`, `success`, `warning` or `error`.
+
+```go
+type chat struct{}
+
+func (chat) Send(ctx context.Context, req sdk.NotifyRequest) error {
+	hook := req.Config["webhook_url"]
+	if hook == "" {
+		return sdk.InvalidConfig("webhook_url", "webhook_url is required")
+	}
+	// Post req.Title and req.Content to the vendor here.
+	return nil
+}
+
+// Validate is optional. It must not send anything.
+func (chat) Validate(ctx context.Context, channel string, config map[string]string) error {
+	if !strings.HasPrefix(config["webhook_url"], "https://") {
+		return sdk.InvalidConfig("webhook_url", "webhook_url must be an https URL")
+	}
+	return nil
+}
+```
+
+### Health check probes
+
+The host offers every kind of the manifest's `probe` block as a check method
+of a site's health check and calls `Check` on its schedule. An unhealthy or
+unreachable target is a result, not an error: return `sdk.ProbeDown` with a
+message, and an error only when the check itself could not run. The context
+expires after `req.TimeoutSeconds`.
+
+```go
+type banner struct{}
+
+func (banner) Check(ctx context.Context, req sdk.ProbeRequest) (sdk.ProbeResult, error) {
+	started := time.Now()
+	u, err := url.Parse(req.Target)
+	if err != nil {
+		return sdk.ProbeResult{}, sdk.InvalidConfig("target", "target is not a URL")
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(u.Hostname(), req.Config["port"]))
+	if err != nil {
+		return sdk.ProbeDown(time.Since(started), err.Error()), nil
+	}
+	defer conn.Close()
+	return sdk.ProbeUp(time.Since(started)), nil
+}
+```
+
+### MCP tools
+
+The host publishes every tool of the manifest's `mcp` block on its Model
+Context Protocol server under the name `<plugin id with dots replaced by
+underscores>__<tool name>` and forwards each call with the unprefixed name.
+The manifest must request the `mcp` permission. Arguments come from an AI
+assistant: validate them before use. Return `sdk.MCPError` for a tool that
+ran and failed, so the assistant sees why; `MCPTools` answers an unknown tool
+with `-32602`.
+
+```go
+sdk.Serve(sdk.Plugin{MCP: sdk.MCPTools{
+	"purge_cache": func(ctx context.Context, args map[string]any) (sdk.MCPResult, error) {
+		zone, _ := args["zone"].(string)
+		if zone == "" {
+			return sdk.MCPError("zone is required"), nil
+		}
+		return sdk.MCPText("purged " + zone), nil
+	},
+}})
+```
+
 ## Transports
 
 stdio is always served. On top of it the SDK serves the same handlers over
 gRPC by default and advertises it in the `plugin.initialize` reply
 (`transports: ["stdio", "grpc"]`), so the host can send capability calls
-(`dns01.*`, `http.handle`) there. Lifecycle methods, `host.*` calls, host log
+(`dns01.*`, `http.handle`, `notify.*`, `probe.check`, `mcp.call`) there. Lifecycle methods, `host.*` calls, host log
 lines and notifications stay on stdio. Nothing changes for your handlers: a
 gRPC call is decoded into the same JSON params and runs the same handler, and
 a returned `*protocol.Error` reaches the host with the same code, message and
@@ -105,7 +200,7 @@ stdio only; the host never depends on gRPC being present.
 
 | Package | Contents |
 | --- | --- |
-| `sdk` (root) | `Plugin`, `Serve`, `Run`, the `DNS01*` interfaces, the `Host` client, errors and the logger |
+| `sdk` (root) | `Plugin`, `Serve`, `Run`, the capability handler interfaces and helpers, the `Host` client, errors and the logger |
 | `sdk/protocol` | The wire types, method names, capability, permission and error-code constants. Mirrors `internal/plugin/protocol` of nginx-ui |
 | `sdk/jsonrpc` | The bidirectional NDJSON JSON-RPC 2.0 peer, usable on its own |
 | `sdk/pb` | Generated protobuf and gRPC bindings of the contract (package `pluginv1`), copied from the spec repository |
@@ -122,7 +217,7 @@ proto describes.
 `pb` is a verbatim copy of the spec repository's generated `gen/go` package:
 message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name` and
 `notification` options, and gRPC clients and servers for the `Plugin`,
-`Host`, `DNS01`, `HTTP` and `Events` services. The plugin runtime in this
+`Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP` and `Events` services. The plugin runtime in this
 module keeps using the hand-written `protocol` types; `pb` is there for
 reflection, for gRPC and for code that prefers generated types. The gRPC
 transport resolves every call through the descriptors in `pb`, so a new rpc
@@ -157,7 +252,7 @@ are never answered. A message larger than 4 MiB is rejected.
 | Code | Helper | Meaning |
 | --- | --- | --- |
 | `-32601` | — | Unknown method |
-| `-32602` | `sdk.InvalidParams` | Malformed params |
+| `-32602` | `sdk.InvalidParams`, `sdk.UnknownTool` | Malformed params, or an MCP tool the plugin does not serve |
 | `-32000` | `sdk.Internal` | Internal failure |
 | `-32002` | `sdk.Unsupported` | Capability method the plugin does not implement |
 | `-32003` | `sdk.InvalidConfig` | Bad credential or setting, `data.field` names it |

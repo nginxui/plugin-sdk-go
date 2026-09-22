@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -276,6 +277,46 @@ func TestGRPCServesTheStdioHandlers(t *testing.T) {
 	}
 }
 
+func TestGRPCServesMCPCalls(t *testing.T) {
+	h := newGRPCHarness(t, Plugin{MCP: MCPTools{
+		"echo": func(_ context.Context, args map[string]any) (MCPResult, error) {
+			paths, _ := args["paths"].([]any)
+			return MCPText(fmt.Sprintf("%s:%d", args["zone"], len(paths))), nil
+		},
+	}}, shortTempDir(t), withGRPCNetwork("unix"))
+
+	conn := h.dial(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The Struct arguments reach the tool as a JSON object and the content
+	// list comes back as repeated messages.
+	args, err := structpb.NewStruct(map[string]any{"zone": "example.com", "paths": []any{"/a", "/b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := invoke(ctx, conn, "/nginxui.plugin.v1.MCP/Call", &pluginv1.MCPCallRequest{Tool: "echo", Arguments: args})
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	var result pluginv1.MCPCallResponse
+	if err = proto.Unmarshal(out, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.GetContent()) != 1 || result.GetContent()[0].GetText() != "example.com:2" || result.GetIsError() {
+		t.Fatalf("result = %v", &result)
+	}
+
+	// An unknown tool is invalid params on gRPC as on stdio.
+	_, err = invoke(ctx, conn, "/nginxui.plugin.v1.MCP/Call", &pluginv1.MCPCallRequest{Tool: "missing"})
+	st, pe := pluginErrorOf(t, err)
+	if st.Code() != codes.InvalidArgument || pe.GetCode() != protocol.CodeInvalidParams {
+		t.Fatalf("unknown tool: status %v, detail %v", st, pe)
+	}
+
+	h.stop(t)
+}
+
 func TestGRPCSocketFallsBackForALongDataDir(t *testing.T) {
 	base := shortTempDir(t)
 	dataDir := filepath.Join(base, strings.Repeat("d", 120))
@@ -436,6 +477,9 @@ func TestRPCIndexCoversTheContract(t *testing.T) {
 	for full, want := range map[string]string{
 		"/nginxui.plugin.v1.DNS01/Present": protocol.MethodDNS01Present,
 		"/nginxui.plugin.v1.HTTP/Handle":   protocol.MethodHTTPHandle,
+		"/nginxui.plugin.v1.Notify/Send":   protocol.MethodNotifySend,
+		"/nginxui.plugin.v1.Probe/Check":   protocol.MethodProbeCheck,
+		"/nginxui.plugin.v1.MCP/Call":      protocol.MethodMCPCall,
 		"/nginxui.plugin.v1.Plugin/Ping":   protocol.MethodPing,
 		"/nginxui.plugin.v1.Events/On":     protocol.MethodEventsOn,
 		"/nginxui.plugin.v1.Host/KVGet":    protocol.MethodHostKVGet,
