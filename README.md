@@ -76,6 +76,33 @@ same wiring over an in-memory pipe.
 | `sdk` (root) | `Plugin`, `Serve`, `Run`, the `DNS01*` interfaces, the `Host` client, errors and the logger |
 | `sdk/protocol` | The wire types, method names, capability, permission and error-code constants. Mirrors `internal/plugin/protocol` of nginx-ui |
 | `sdk/jsonrpc` | The bidirectional NDJSON JSON-RPC 2.0 peer, usable on its own |
+| `sdk/pb` | Generated protobuf and gRPC bindings of the contract (package `pluginv1`), copied from the spec repository |
+
+## The proto contract and `pb`
+
+The wire contract is defined in proto, in
+[nginx-ui-plugin-spec](https://github.com/0xJacky/nginx-ui-plugin-spec)
+under `proto/nginxui/plugin/v1`. A JSON-RPC `method` is the rpc's `rpc_name`
+option and `params` / `result` are the protobuf JSON mapping of its messages
+with proto field names, so the JSON the SDK exchanges is exactly what the
+proto describes.
+
+`pb` is a verbatim copy of the spec repository's generated `gen/go` package:
+message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name` and
+`notification` options, and gRPC clients and servers for the `Plugin`,
+`Host`, `DNS01`, `HTTP` and `Events` services. The plugin runtime in this
+module keeps using the hand-written `protocol` types; `pb` is there for
+reflection, for gRPC and for code that prefers generated types.
+`protocol/alignment_test.go` fails when a `protocol` type drifts from its
+proto message, when a method constant has no rpc, or when an error code
+differs from the `ErrorCode` enum.
+
+To pick up a contract change, run `make generate` in the spec repository,
+then `pb/regen.sh` here (it expects the spec checkout next to this
+repository, or `SPEC_DIR`), then update `protocol` until `go test ./...`
+passes. Do not link `pb` into one binary together with another copy of the
+same generated package: the protobuf runtime rejects duplicate registrations
+of `nginxui.plugin.v1`.
 
 ## Lifecycle
 
