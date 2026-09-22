@@ -84,6 +84,8 @@ the derived list). The manifest block of each capability is described in the
 | `Notify` | `notify` | `notify.send`, optional `notify.validate` | `NotifyHandler`, plus `NotifyValidator` |
 | `Probe` | `probe` | `probe.check` | `ProbeHandler` |
 | `MCP` | `mcp` | `mcp.call` | `MCPHandler`, or the ready-made `MCPTools` map |
+| `Storage` | `storage` | `storage.put`, `storage.get`, `storage.list`, `storage.delete`, optional `storage.validate` | `StorageHandler`, plus `StorageValidator` |
+| `Deploy` | `cert.deploy` | `deploy.push`, optional `deploy.validate` | `DeployHandler`, plus `DeployValidator` |
 
 An optional method the handler does not implement answers `-32002`
 (Unsupported), and the host falls back or treats it as "no opinion".
@@ -165,12 +167,84 @@ sdk.Serve(sdk.Plugin{MCP: sdk.MCPTools{
 }})
 ```
 
+### Storage backends
+
+The host offers every backend of the manifest's `storage` block next to its
+built-in storage, for example as a destination of automatic backups. File
+contents never travel in a message: for `Put` the host has placed the file at
+`req.SourcePath`, for `Get` you write the object to `req.TargetPath`, both
+inside `<data dir>/exchange/`, and the host removes them after your reply.
+Keys are relative `/` separated paths; the SDK answers a malformed key with
+`-32602` before your handler runs, so building a vendor path from it is safe.
+`Delete` of a missing object must succeed, and `List` takes a plain string
+prefix.
+
+```go
+type dav struct{}
+
+func (dav) Put(ctx context.Context, req sdk.StoragePutRequest) (int64, error) {
+	f, err := os.Open(req.SourcePath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	// Upload f to req.Config["url"] + "/" + req.Key here.
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
+func (dav) Get(ctx context.Context, req sdk.StorageGetRequest) (int64, error) {
+	// Download req.Key into a new file at req.TargetPath here.
+	return 0, sdk.Internal("not implemented")
+}
+
+func (dav) List(ctx context.Context, req sdk.StorageListRequest) ([]sdk.StorageObject, error) {
+	// Return sdk.StoredObject(key, size, modified) for every key with req.Prefix.
+	return nil, nil
+}
+
+func (dav) Delete(ctx context.Context, req sdk.StorageDeleteRequest) error {
+	return nil
+}
+```
+
+### Certificate deployment
+
+The host pushes a certificate to every target a person bound to it after
+each issuance or renewal, and on demand. `req.Certificate` carries the leaf,
+its chain and its private key as PEM (`sdk.FullChainPEM` joins leaf and
+chain); `req.DryRun` asks you to check the target without changing anything.
+Because the request carries the private key, the manifest must request the
+`cert.deploy` permission, and the key must never reach a log line or an
+error. A push must be idempotent: the host retries failures.
+
+```go
+type cdn struct{}
+
+func (cdn) Push(ctx context.Context, req sdk.DeployRequest) (string, error) {
+	zone := req.Config["zone_id"]
+	if zone == "" {
+		return "", sdk.InvalidConfig("zone_id", "zone_id is required")
+	}
+	if req.DryRun {
+		// Read-only checks against the CDN here.
+		return "zone " + zone + " is reachable", nil
+	}
+	// Upload sdk.FullChainPEM(req.Certificate) and req.Certificate.PrivateKeyPEM here.
+	return "certificate bound to zone " + zone, nil
+}
+```
+
 ## Transports
 
 stdio is always served. On top of it the SDK serves the same handlers over
 gRPC by default and advertises it in the `plugin.initialize` reply
 (`transports: ["stdio", "grpc"]`), so the host can send capability calls
-(`dns01.*`, `http.handle`, `notify.*`, `probe.check`, `mcp.call`) there. Lifecycle methods, `host.*` calls, host log
+(`dns01.*`, `http.handle`, `notify.*`, `probe.check`, `mcp.call`,
+`storage.*`, `deploy.*`) there. Lifecycle methods, `host.*` calls, host log
 lines and notifications stay on stdio. Nothing changes for your handlers: a
 gRPC call is decoded into the same JSON params and runs the same handler, and
 a returned `*protocol.Error` reaches the host with the same code, message and
@@ -217,7 +291,8 @@ proto describes.
 `pb` is a verbatim copy of the spec repository's generated `gen/go` package:
 message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name` and
 `notification` options, and gRPC clients and servers for the `Plugin`,
-`Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP` and `Events` services. The plugin runtime in this
+`Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP`, `Storage`, `Deploy` and
+`Events` services. The plugin runtime in this
 module keeps using the hand-written `protocol` types; `pb` is there for
 reflection, for gRPC and for code that prefers generated types. The gRPC
 transport resolves every call through the descriptors in `pb`, so a new rpc
@@ -252,7 +327,7 @@ are never answered. A message larger than 4 MiB is rejected.
 | Code | Helper | Meaning |
 | --- | --- | --- |
 | `-32601` | — | Unknown method |
-| `-32602` | `sdk.InvalidParams`, `sdk.UnknownTool` | Malformed params, or an MCP tool the plugin does not serve |
+| `-32602` | `sdk.InvalidParams`, `sdk.UnknownTool` | Malformed params, an MCP tool the plugin does not serve, or a malformed storage key |
 | `-32000` | `sdk.Internal` | Internal failure |
 | `-32002` | `sdk.Unsupported` | Capability method the plugin does not implement |
 | `-32003` | `sdk.InvalidConfig` | Bad credential or setting, `data.field` names it |

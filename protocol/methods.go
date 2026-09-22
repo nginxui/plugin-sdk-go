@@ -44,6 +44,21 @@ const (
 	MethodMCPCall = "mcp.call"
 )
 
+// Capability storage methods (host -> plugin).
+const (
+	MethodStorageValidate = "storage.validate"
+	MethodStoragePut      = "storage.put"
+	MethodStorageGet      = "storage.get"
+	MethodStorageList     = "storage.list"
+	MethodStorageDelete   = "storage.delete"
+)
+
+// Capability cert.deploy methods (host -> plugin).
+const (
+	MethodDeployValidate = "deploy.validate"
+	MethodDeployPush     = "deploy.push"
+)
+
 // Event and cron delivery (host -> plugin).
 const (
 	MethodEventsOn = "events.on" // notification
@@ -72,6 +87,10 @@ const (
 	CapabilityNotify = "notify"
 	CapabilityProbe  = "probe"
 	CapabilityMCP    = "mcp"
+	// CapabilityStorage keeps host files in the backends of the manifest.
+	CapabilityStorage = "storage"
+	// CapabilityCertDeploy pushes certificates to external targets.
+	CapabilityCertDeploy = "cert.deploy"
 )
 
 // Permission names a plugin may request in its manifest.
@@ -84,6 +103,9 @@ const (
 	PermissionCoreAPI     = "core_api"
 	// PermissionMCP lets the host publish the tools of the mcp capability.
 	PermissionMCP = "mcp"
+	// PermissionCertDeploy lets the host send certificates and their private
+	// keys to the cert.deploy capability.
+	PermissionCertDeploy = "cert.deploy"
 	// PermissionCredentialsReadPrefix is followed by the credential kind, e.g. "credentials.read:dns".
 	PermissionCredentialsReadPrefix = "credentials.read:"
 )

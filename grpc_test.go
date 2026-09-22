@@ -317,6 +317,57 @@ func TestGRPCServesMCPCalls(t *testing.T) {
 	h.stop(t)
 }
 
+// bigStorage lists one object past 4 GiB and stores nothing.
+type bigStorage struct{}
+
+func (bigStorage) Put(context.Context, StoragePutRequest) (int64, error) { return 6 << 30, nil }
+func (bigStorage) Get(context.Context, StorageGetRequest) (int64, error) { return 0, Internal("empty") }
+func (bigStorage) Delete(context.Context, StorageDeleteRequest) error    { return nil }
+func (bigStorage) List(_ context.Context, req StorageListRequest) ([]StorageObject, error) {
+	return []StorageObject{StoredObject(req.Prefix+"big.zip", 5<<30, time.Time{})}, nil
+}
+
+func TestGRPCCarriesStorageSizesAsDoubles(t *testing.T) {
+	h := newGRPCHarness(t, Plugin{Storage: bigStorage{}}, shortTempDir(t), withGRPCNetwork("unix"))
+
+	conn := h.dial(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := invoke(ctx, conn, "/nginxui.plugin.v1.Storage/List", &pluginv1.StorageListRequest{Backend: "webdav", Prefix: "b/"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var list pluginv1.StorageListResponse
+	if err = proto.Unmarshal(out, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.GetObjects()) != 1 || list.GetObjects()[0].GetKey() != "b/big.zip" || list.GetObjects()[0].GetSize() != 5<<30 {
+		t.Fatalf("list = %v", &list)
+	}
+
+	out, err = invoke(ctx, conn, "/nginxui.plugin.v1.Storage/Put", &pluginv1.StoragePutRequest{Backend: "webdav", Key: "b/big.zip", SourcePath: "/x"})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	var put pluginv1.StoragePutResponse
+	if err = proto.Unmarshal(out, &put); err != nil {
+		t.Fatal(err)
+	}
+	if put.GetSize() != 6<<30 {
+		t.Fatalf("size = %v", put.GetSize())
+	}
+
+	// A malformed key is invalid params on gRPC as on stdio.
+	_, err = invoke(ctx, conn, "/nginxui.plugin.v1.Storage/Delete", &pluginv1.StorageDeleteRequest{Backend: "webdav", Key: "../x"})
+	st, pe := pluginErrorOf(t, err)
+	if st.Code() != codes.InvalidArgument || pe.GetCode() != protocol.CodeInvalidParams {
+		t.Fatalf("malformed key: status %v, detail %v", st, pe)
+	}
+
+	h.stop(t)
+}
+
 func TestGRPCSocketFallsBackForALongDataDir(t *testing.T) {
 	base := shortTempDir(t)
 	dataDir := filepath.Join(base, strings.Repeat("d", 120))
@@ -480,6 +531,8 @@ func TestRPCIndexCoversTheContract(t *testing.T) {
 		"/nginxui.plugin.v1.Notify/Send":   protocol.MethodNotifySend,
 		"/nginxui.plugin.v1.Probe/Check":   protocol.MethodProbeCheck,
 		"/nginxui.plugin.v1.MCP/Call":      protocol.MethodMCPCall,
+		"/nginxui.plugin.v1.Storage/List":  protocol.MethodStorageList,
+		"/nginxui.plugin.v1.Deploy/Push":   protocol.MethodDeployPush,
 		"/nginxui.plugin.v1.Plugin/Ping":   protocol.MethodPing,
 		"/nginxui.plugin.v1.Events/On":     protocol.MethodEventsOn,
 		"/nginxui.plugin.v1.Host/KVGet":    protocol.MethodHostKVGet,

@@ -13,7 +13,8 @@
 // the plugin on stdio only.
 //
 // The smallest plugin is a capability handler handed to Serve, a
-// DNS01Handler, NotifyHandler, ProbeHandler or MCPHandler:
+// DNS01Handler, NotifyHandler, ProbeHandler, MCPHandler, StorageHandler or
+// DeployHandler:
 //
 //	func main() {
 //		sdk.Serve(sdk.Plugin{DNS01: &myHandler{}})
@@ -72,6 +73,12 @@ type Plugin struct {
 	// ready-made handler that dispatches by tool name.
 	MCP MCPHandler
 
+	// Storage serves the storage capability. Nil disables it.
+	Storage StorageHandler
+
+	// Deploy serves the cert.deploy capability. Nil disables it.
+	Deploy DeployHandler
+
 	// Configure receives the settings map on plugin.configure. Optional.
 	Configure func(ctx context.Context, settings map[string]any) error
 
@@ -106,6 +113,12 @@ func (p Plugin) capabilities() []string {
 	}
 	if p.MCP != nil {
 		caps = append(caps, protocol.CapabilityMCP)
+	}
+	if p.Storage != nil {
+		caps = append(caps, protocol.CapabilityStorage)
+	}
+	if p.Deploy != nil {
+		caps = append(caps, protocol.CapabilityCertDeploy)
 	}
 	return caps
 }
@@ -273,6 +286,12 @@ func (rt *runtime) register() {
 	}
 	if rt.plugin.MCP != nil {
 		rt.registerMCP()
+	}
+	if rt.plugin.Storage != nil {
+		rt.registerStorage()
+	}
+	if rt.plugin.Deploy != nil {
+		rt.registerDeploy()
 	}
 
 	for name, h := range rt.plugin.Methods {

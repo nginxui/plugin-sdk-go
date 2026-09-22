@@ -250,14 +250,19 @@ func TestMCPToolsDispatchByName(t *testing.T) {
 
 func TestCapabilitiesFollowTheHandlers(t *testing.T) {
 	h := newHarness(t, sdk.Plugin{
-		DNS01:  newRecorder(),
-		Notify: &notifier{sent: make(chan sdk.NotifyRequest, 1)},
-		Probe:  &prober{deadline: make(chan time.Duration, 1)},
-		MCP:    sdk.MCPTools{},
+		DNS01:   newRecorder(),
+		Notify:  &notifier{sent: make(chan sdk.NotifyRequest, 1)},
+		Probe:   &prober{deadline: make(chan time.Duration, 1)},
+		MCP:     sdk.MCPTools{},
+		Storage: newMemoryStorage(),
+		Deploy:  &deployer{pushed: make(chan sdk.DeployRequest, 1)},
 	})
 
 	res := h.initialize(t)
-	want := []string{protocol.CapabilityDNS01, protocol.CapabilityNotify, protocol.CapabilityProbe, protocol.CapabilityMCP}
+	want := []string{
+		protocol.CapabilityDNS01, protocol.CapabilityNotify, protocol.CapabilityProbe, protocol.CapabilityMCP,
+		protocol.CapabilityStorage, protocol.CapabilityCertDeploy,
+	}
 	if !slices.Equal(res.Capabilities, want) {
 		t.Fatalf("capabilities = %v, want %v", res.Capabilities, want)
 	}
@@ -267,7 +272,10 @@ func TestUnservedCapabilityMethodsAreUnknown(t *testing.T) {
 	h := newHarness(t, sdk.Plugin{DNS01: newRecorder()})
 	h.initialize(t)
 
-	for _, method := range []string{protocol.MethodNotifySend, protocol.MethodProbeCheck, protocol.MethodMCPCall} {
+	for _, method := range []string{
+		protocol.MethodNotifySend, protocol.MethodProbeCheck, protocol.MethodMCPCall,
+		protocol.MethodStoragePut, protocol.MethodStorageValidate, protocol.MethodDeployPush, protocol.MethodDeployValidate,
+	} {
 		err := h.host.Call(t.Context(), method, map[string]any{}, nil)
 		if code := errorCode(t, err); code != protocol.CodeMethodNotFound {
 			t.Fatalf("%s: code = %d, want %d", method, code, protocol.CodeMethodNotFound)
