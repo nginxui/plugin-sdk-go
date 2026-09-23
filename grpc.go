@@ -3,7 +3,9 @@ package sdk
 // This file serves the optional gRPC transport (spec/03-wire-protocol.md
 // WIRE-11). Every gRPC call is resolved through the proto descriptors of the
 // contract to its JSON-RPC method name and runs the exact handler the stdio
-// dispatcher runs, so both transports answer identically.
+// dispatcher runs, so both transports answer identically. A client streaming
+// rpc (WIRE-12) has no stdio form: it is read until the end of the stream
+// and handed to its stream handler.
 
 import (
 	"context"
@@ -13,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -99,6 +102,8 @@ type rpcMethod struct {
 	input        protoreflect.MessageDescriptor
 	output       protoreflect.MessageDescriptor
 	notification bool
+	// streaming marks a client streaming rpc, which travels on gRPC only.
+	streaming bool
 }
 
 // rpcIndex maps every gRPC full method of the contract to its rpc.
@@ -117,6 +122,7 @@ var rpcIndex = sync.OnceValue(func() map[string]*rpcMethod {
 					continue
 				}
 				notification, _ := proto.GetExtension(md.Options(), pluginv1.E_Notification).(bool)
+				streaming, _ := proto.GetExtension(md.Options(), pluginv1.E_Streaming).(bool)
 				full := fmt.Sprintf("/%s/%s", sd.FullName(), md.Name())
 				index[full] = &rpcMethod{
 					name:         name,
@@ -124,6 +130,7 @@ var rpcIndex = sync.OnceValue(func() map[string]*rpcMethod {
 					input:        md.Input(),
 					output:       md.Output(),
 					notification: notification,
+					streaming:    streaming || md.IsStreamingClient(),
 				}
 			}
 		}
@@ -131,6 +138,26 @@ var rpcIndex = sync.OnceValue(func() map[string]*rpcMethod {
 	})
 	return index
 })
+
+// isStreamingRPC reports whether name is the rpc_name of a streaming rpc,
+// which must never be registered as a stdio handler.
+func isStreamingRPC(name string) bool {
+	for _, rpc := range rpcIndex() {
+		if rpc.name == name && rpc.streaming {
+			return true
+		}
+	}
+	return false
+}
+
+// streamHandler consumes one client stream of a streaming rpc.
+type streamHandler interface {
+	// add takes one request message, in protobuf encoding.
+	add(ctx context.Context, in []byte) error
+	// finish runs once the caller closed the stream and returns the
+	// response message in protobuf encoding.
+	finish(ctx context.Context) ([]byte, error)
+}
 
 // rawCodec hands the undecoded message bytes to the handler. The bytes are
 // protobuf, so it keeps the standard "proto" content subtype on the wire.
@@ -336,6 +363,10 @@ func (t *grpcTransport) handle(_ any, stream grpc.ServerStream) error {
 	}
 
 	fullMethod, _ := grpc.MethodFromServerStream(stream)
+	if rpc, ok := rpcIndex()[fullMethod]; ok && rpc.streaming {
+		return t.rt.serveGRPCStream(ctx, rpc, stream)
+	}
+
 	var in []byte
 	if err := stream.RecvMsg(&in); err != nil {
 		return err
@@ -398,6 +429,48 @@ func (rt *runtime) serveGRPC(ctx context.Context, fullMethod string, in []byte) 
 		return nil, grpcStatus(Internal("marshal result: "+err.Error()), 0)
 	}
 	return out, nil
+}
+
+// serveGRPCStream reads a client stream until its end, hands every message to
+// the stream handler of the rpc and answers once. The returned error is
+// always a gRPC status.
+func (rt *runtime) serveGRPCStream(ctx context.Context, rpc *rpcMethod, stream grpc.ServerStream) (err error) {
+	open, ok := rt.streams[rpc.name]
+	if !ok {
+		return grpcStatus(&protocol.Error{Code: protocol.CodeMethodNotFound, Message: "unknown method: " + rpc.name}, 0)
+	}
+
+	// An open stream counts for plugin.shutdown like any capability call.
+	rt.inflight.Add(1)
+	defer rt.inflight.Add(-1)
+	defer func() {
+		if r := recover(); r != nil {
+			err = grpcStatus(Internal(fmt.Sprintf("panic in %s: %v", rpc.name, r)), 0)
+		}
+	}()
+
+	ctx = WithHost(ctx, rt.host)
+	h := open()
+	for {
+		var in []byte
+		if recvErr := stream.RecvMsg(&in); recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			// The caller went away or the transport failed; the status of
+			// the stream already says so.
+			return recvErr
+		}
+		if addErr := h.add(ctx, in); addErr != nil {
+			return grpcStatus(addErr, 0)
+		}
+	}
+
+	out, err := h.finish(ctx)
+	if err != nil {
+		return grpcStatus(err, 0)
+	}
+	return stream.SendMsg(out)
 }
 
 // invokeSafely runs h and turns a panic into an internal error, like the

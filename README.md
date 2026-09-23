@@ -88,6 +88,7 @@ the derived list). The manifest block of each capability is described in the
 | `Deploy` | `cert.deploy` | `deploy.push`, optional `deploy.validate` | `DeployHandler`, plus `DeployValidator` |
 | `Blocklist` | `security.blocklist` | `blocklist.fetch` | `BlocklistHandler` |
 | `Discovery` | `upstream.discovery` | `discovery.resolve` | `DiscoveryHandler` |
+| `LogSink` | `log.sink` | the `log.push` stream, gRPC only | `LogSinkHandler` |
 
 An optional method the handler does not implement answers `-32002`
 (Unsupported), and the host falls back or treats it as "no opinion".
@@ -290,6 +291,41 @@ func (registry) Resolve(ctx context.Context, req sdk.DiscoveryRequest) (sdk.Disc
 }
 ```
 
+### Access log sinks
+
+The host streams the nginx access log lines it reads to a `log.sink` plugin
+while nginx writes them, in batches of at most `log_sink.batch_size`
+entries (256 by default). `Push` gets one batch, every entry with its
+`LogPath` and the parsed fields (`RemoteAddr`, `RequestURI`, `Status`,
+`BodyBytesSent`, `RequestTime`, ...), and returns how many entries it kept;
+the rest counts as rejected. `entry.Parsed()` is false for a line the host
+could not parse, which carries only `Raw` and `Timestamp`. Answer quickly and
+buffer towards a slow destination: the host queues at most 8192 lines per
+plugin and drops the rest. An error loses the whole batch. The manifest must
+request the `log.read` permission.
+
+```go
+type shipper struct{ out chan<- sdk.LogEntry }
+
+func (s shipper) Push(ctx context.Context, batch []sdk.LogEntry) (int, error) {
+	accepted := 0
+	for _, entry := range batch {
+		select {
+		case s.out <- entry:
+			accepted++
+		default:
+			// The buffer is full, the entry counts as rejected.
+		}
+	}
+	return accepted, nil
+}
+```
+
+The lines travel as a client stream on the gRPC transport only (spec
+WIRE-12): `log.push` has no stdio form and answers `-32601` there. Setting
+`LogSink` therefore keeps gRPC on even when `WithoutGRPC` or
+`NGINX_UI_PLUGIN_DISABLE_GRPC=1` asked for stdio only.
+
 ### Content plugins
 
 Config templates and translation files need no process and no SDK: declare
@@ -302,8 +338,9 @@ stdio is always served. On top of it the SDK serves the same handlers over
 gRPC by default and advertises it in the `plugin.initialize` reply
 (`transports: ["stdio", "grpc"]`), so the host can send capability calls
 (`dns01.*`, `http.handle`, `notify.*`, `probe.check`, `mcp.call`,
-`storage.*`, `deploy.*`, `blocklist.fetch`, `discovery.resolve`) there. Lifecycle methods, `host.*` calls, host log
-lines and notifications stay on stdio. Nothing changes for your handlers: a
+`storage.*`, `deploy.*`, `blocklist.fetch`, `discovery.resolve`) there, and
+streams (`log.push`), which exist on gRPC only. Lifecycle methods, `host.*`
+calls, host log lines and notifications stay on stdio. Nothing changes for your handlers: a
 gRPC call is decoded into the same JSON params and runs the same handler, and
 a returned `*protocol.Error` reaches the host with the same code, message and
 data on either transport.
@@ -319,7 +356,8 @@ data on either transport.
   `authorization: Bearer <rpc_token>` are rejected.
 
 To stay on stdio only, pass `sdk.WithoutGRPC()` to `Serve` or `Run`, or set
-`NGINX_UI_PLUGIN_DISABLE_GRPC=1` in the plugin environment:
+`NGINX_UI_PLUGIN_DISABLE_GRPC=1` in the plugin environment (a plugin with a
+`LogSink` keeps gRPC regardless):
 
 ```go
 sdk.Serve(sdk.Plugin{DNS01: provider{}}, sdk.WithoutGRPC())
@@ -347,14 +385,16 @@ with proto field names, so the JSON the SDK exchanges is exactly what the
 proto describes.
 
 `pb` is a verbatim copy of the spec repository's generated `gen/go` package:
-message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name` and
-`notification` options, and gRPC clients and servers for the `Plugin`,
-`Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP`, `Storage`, `Deploy`,
-`Blocklist`, `Discovery` and `Events` services. The plugin runtime in this
+message types such as `pluginv1.DNS01PresentRequest`, the `rpc_name`,
+`notification` and `streaming` options, and gRPC clients and servers for the
+`Plugin`, `Host`, `DNS01`, `HTTP`, `Notify`, `Probe`, `MCP`, `Storage`,
+`Deploy`, `Blocklist`, `Discovery`, `LogSink` and `Events` services. The plugin runtime in this
 module keeps using the hand-written `protocol` types; `pb` is there for
 reflection, for gRPC and for code that prefers generated types. The gRPC
 transport resolves every call through the descriptors in `pb`, so a new rpc
-in the contract is served as soon as `pb` is updated and a handler exists.
+in the contract is served as soon as `pb` is updated and a handler exists; a
+client streaming rpc is detected from the descriptors, read until the end of
+the stream and handed to its stream handler.
 `protocol/alignment_test.go` fails when a `protocol` type drifts from its
 proto message, when a method constant has no rpc, or when an error code
 differs from the `ErrorCode` enum.

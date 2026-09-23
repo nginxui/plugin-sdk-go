@@ -14,7 +14,7 @@
 //
 // The smallest plugin is a capability handler handed to Serve, a
 // DNS01Handler, NotifyHandler, ProbeHandler, MCPHandler, StorageHandler,
-// DeployHandler, BlocklistHandler or DiscoveryHandler:
+// DeployHandler, BlocklistHandler, DiscoveryHandler or LogSinkHandler:
 //
 //	func main() {
 //		sdk.Serve(sdk.Plugin{DNS01: &myHandler{}})
@@ -85,6 +85,12 @@ type Plugin struct {
 	// Discovery serves the upstream.discovery capability. Nil disables it.
 	Discovery DiscoveryHandler
 
+	// LogSink serves the log.sink capability: it receives the access log
+	// lines of the host as a stream on the gRPC transport. Nil disables it.
+	// Setting it keeps the gRPC transport on even under WithoutGRPC or
+	// NGINX_UI_PLUGIN_DISABLE_GRPC=1, since the lines never travel on stdio.
+	LogSink LogSinkHandler
+
 	// Configure receives the settings map on plugin.configure. Optional.
 	Configure func(ctx context.Context, settings map[string]any) error
 
@@ -132,6 +138,9 @@ func (p Plugin) capabilities() []string {
 	if p.Discovery != nil {
 		caps = append(caps, protocol.CapabilityUpstreamDiscovery)
 	}
+	if p.LogSink != nil {
+		caps = append(caps, protocol.CapabilityLogSink)
+	}
 	return caps
 }
 
@@ -156,11 +165,12 @@ func Run(ctx context.Context, p Plugin, r io.Reader, w io.Writer, opts ...Option
 	conn := jsonrpc.NewConn(r, w)
 
 	rt := &runtime{
-		plugin: p,
-		opts:   newOptions(opts),
-		conn:   conn,
-		host:   newHost(conn, envInfo()),
-		exitCh: make(chan struct{}),
+		plugin:  p,
+		opts:    newOptions(opts),
+		conn:    conn,
+		host:    newHost(conn, envInfo()),
+		exitCh:  make(chan struct{}),
+		streams: map[string]func() streamHandler{},
 	}
 
 	currentHost.Store(rt.host)
@@ -212,6 +222,10 @@ type runtime struct {
 	// grpcMu guards grpc, the optional second transport.
 	grpcMu sync.Mutex
 	grpc   *grpcTransport
+
+	// streams opens the handler of every streaming rpc the plugin serves,
+	// keyed by rpc name. It is filled by register and read only afterwards.
+	streams map[string]func() streamHandler
 
 	exitOnce sync.Once
 	exitCh   chan struct{}
@@ -311,8 +325,17 @@ func (rt *runtime) register() {
 	if rt.plugin.Discovery != nil {
 		rt.registerDiscovery()
 	}
+	if rt.plugin.LogSink != nil {
+		rt.registerLogSink()
+	}
 
 	for name, h := range rt.plugin.Methods {
+		if isStreamingRPC(name) {
+			// A streaming rpc has no JSON-RPC form, stdio keeps answering
+			// method not found for it (spec WIRE-12).
+			Logger.Warnf("ignoring the stdio handler for %s, a streaming rpc travels on gRPC only", name)
+			continue
+		}
 		rt.conn.Handle(name, rt.track(h))
 	}
 }
@@ -358,7 +381,10 @@ func (rt *runtime) onInitialize(_ context.Context, raw json.RawMessage) (any, er
 // disabled or could not start, in which case the plugin stays on stdio.
 func (rt *runtime) startGRPC() *grpcTransport {
 	if rt.opts.disableGRPC {
-		return nil
+		if rt.plugin.LogSink == nil {
+			return nil
+		}
+		Logger.Warnf("the log.sink capability needs the gRPC transport, serving it although it was disabled")
 	}
 
 	rt.grpcMu.Lock()
