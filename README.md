@@ -1,4 +1,4 @@
-# nginx-ui-plugin-sdk-go
+# nginxui/plugin-sdk-go
 
 Go SDK for writing [NGINX UI](https://github.com/0xJacky/nginx-ui) plugins.
 
@@ -8,7 +8,7 @@ stops it again. `stdout` carries protocol traffic only; every human readable
 line must go to `stderr`, which the SDK logger does for you.
 
 ```bash
-go get github.com/0xJacky/nginx-ui-plugin-sdk-go
+go get github.com/nginxui/plugin-sdk-go
 ```
 
 ## Example
@@ -20,8 +20,8 @@ import (
 	"context"
 	"fmt"
 
-	sdk "github.com/0xJacky/nginx-ui-plugin-sdk-go"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	sdk "github.com/nginxui/plugin-sdk-go"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 type provider struct{}
@@ -76,7 +76,7 @@ Each capability is one field of `sdk.Plugin`. Setting it wires the methods of
 the capability and adds its name to the `capabilities` the plugin reports in
 the handshake, which must match the manifest (`Plugin.Capabilities` overrides
 the derived list). The manifest block of each capability is described in the
-[specification](https://github.com/0xJacky/nginx-ui-plugin-spec).
+[specification](https://github.com/nginxui/plugin-spec).
 
 | Field | Capability | Methods | Handler |
 | --- | --- | --- | --- |
@@ -378,7 +378,7 @@ stdio only; the host never depends on gRPC being present.
 ## The proto contract and `pb`
 
 The wire contract is defined in proto, in
-[nginx-ui-plugin-spec](https://github.com/0xJacky/nginx-ui-plugin-spec)
+[plugin-spec](https://github.com/nginxui/plugin-spec)
 under `proto/nginxui/plugin/v1`. A JSON-RPC `method` is the rpc's `rpc_name`
 option and `params` / `result` are the protobuf JSON mapping of its messages
 with proto field names, so the JSON the SDK exchanges is exactly what the

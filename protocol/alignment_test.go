@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	pluginv1 "github.com/0xJacky/nginx-ui-plugin-sdk-go/pb"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	pluginv1 "github.com/nginxui/plugin-sdk-go/pb"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"

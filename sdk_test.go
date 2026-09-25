@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/0xJacky/nginx-ui-plugin-sdk-go"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/jsonrpc"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	sdk "github.com/nginxui/plugin-sdk-go"
+	"github.com/nginxui/plugin-sdk-go/jsonrpc"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // harness runs a plugin over in-memory pipes and exposes the host side of the

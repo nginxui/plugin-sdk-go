@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // pair wires two peers back to back over in-memory pipes.

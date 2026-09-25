@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 func TestByteSizeDecodesAnyWholeNumber(t *testing.T) {

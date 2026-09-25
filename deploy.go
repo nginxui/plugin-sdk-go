@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // DeployRequest is the payload of deploy.push.

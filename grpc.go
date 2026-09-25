@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	pluginv1 "github.com/0xJacky/nginx-ui-plugin-sdk-go/pb"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	pluginv1 "github.com/nginxui/plugin-sdk-go/pb"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

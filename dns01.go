@@ -3,7 +3,7 @@ package sdk
 import (
 	"context"
 
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // DNS01Request is the payload of dns01.present and dns01.cleanup.

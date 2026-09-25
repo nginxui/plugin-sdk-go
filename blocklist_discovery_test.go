@@ -6,8 +6,8 @@ import (
 	"slices"
 	"testing"
 
-	sdk "github.com/0xJacky/nginx-ui-plugin-sdk-go"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	sdk "github.com/nginxui/plugin-sdk-go"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // feed is a BlocklistHandler with a fixed list.

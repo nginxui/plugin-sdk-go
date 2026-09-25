@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // StoragePutRequest is the payload of storage.put.

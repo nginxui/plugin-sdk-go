@@ -7,7 +7,7 @@
 // in sync: only add fields, never rename or change the JSON tag of an
 // existing one.
 //
-// Both copies follow the proto contract of the nginx-ui-plugin-spec
+// Both copies follow the proto contract of the plugin-spec
 // repository, which is the source of truth. Package pb holds the generated
 // code and alignment_test.go fails when a type here drifts from its message.
 package protocol

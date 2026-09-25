@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/0xJacky/nginx-ui-plugin-sdk-go"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	sdk "github.com/nginxui/plugin-sdk-go"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // notifier is a NotifyHandler that remembers what it was asked to send.

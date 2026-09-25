@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/0xJacky/nginx-ui-plugin-sdk-go"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	sdk "github.com/nginxui/plugin-sdk-go"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // memoryStorage is a StorageHandler that keeps objects in memory and reads

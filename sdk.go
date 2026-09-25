@@ -38,8 +38,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/jsonrpc"
-	"github.com/0xJacky/nginx-ui-plugin-sdk-go/protocol"
+	"github.com/nginxui/plugin-sdk-go/jsonrpc"
+	"github.com/nginxui/plugin-sdk-go/protocol"
 )
 
 // ShutdownDrain bounds how long plugin.shutdown waits for the capability calls
