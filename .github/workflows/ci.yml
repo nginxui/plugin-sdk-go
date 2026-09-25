@@ -1,0 +1,58 @@
+name: CI
+
+# Runs on every pull request and on main: gofmt, go vet and the tests with
+# the race detector, then a check that pb/ still matches the generated
+# contract package of nginxui/plugin-spec. pb/ holds verbatim copies, so a
+# proto change in the spec turns this red until pb/regen.sh is run here.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "${files}" ]; then
+            echo "gofmt would change:"
+            echo "${files}"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - run: go test -race -count=1 ./...
+
+  contract:
+    name: pb/ matches nginxui/plugin-spec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin-sdk-go
+
+      # pb/regen.sh looks for the spec checkout next to this repository.
+      - uses: actions/checkout@v4
+        with:
+          repository: nginxui/plugin-spec
+          path: plugin-spec
+
+      - name: pb/regen.sh --check
+        working-directory: plugin-sdk-go
+        run: sh pb/regen.sh --check
