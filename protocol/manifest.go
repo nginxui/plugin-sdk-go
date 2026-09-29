@@ -166,11 +166,16 @@ type DNS01ProviderField struct {
 }
 
 // DNS01ProviderMethod is one way to sign in. Fields lists the credential
-// keys it uses; credential fields no method lists are shown with every one.
+// keys it uses and may be empty, but encode it as an empty slice, not nil.
+// Credential fields no method lists are shown with every one. Values are
+// fixed config entries the host stores while the method is chosen. A value
+// key may also be a credential field that other methods list, never one
+// the same method lists (DNS01-16).
 type DNS01ProviderMethod struct {
-	Name        string   `json:"name"`
-	Recommended bool     `json:"recommended,omitempty"`
-	Fields      []string `json:"fields"`
+	Name        string            `json:"name"`
+	Recommended bool              `json:"recommended,omitempty"`
+	Fields      []string          `json:"fields"`
+	Values      map[string]string `json:"values,omitempty"`
 }
 
 // ManifestHTTP is the metadata block for the http capability.
