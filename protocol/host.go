@@ -82,6 +82,28 @@ type HostNotifyParams struct {
 	Details any    `json:"details,omitempty"`
 }
 
+// HostLogsListResult is the reply to host.logs.list.
+type HostLogsListResult struct {
+	Logs []HostLogFile `json:"logs"`
+}
+
+// HostLogFile is one log file of HostLogsListResult. Rotated files are not
+// listed, the plugin finds them next to Path.
+type HostLogFile struct {
+	Path       string `json:"path"`
+	Type       string `json:"type"`                  // access | error
+	Source     string `json:"source"`                // config | default
+	ConfigFile string `json:"config_file,omitempty"` // empty when Source is default
+}
+
+// HostActivitySetParams is the payload of host.activity.set. Label is an
+// English source string the host translates.
+type HostActivitySetParams struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Active bool   `json:"active"`
+}
+
 // HostMetricsSnapshotResult is the reply to host.metrics.snapshot. The shape
 // mirrors internal/analytic's snapshot and is opaque to the protocol.
 type HostMetricsSnapshotResult struct {

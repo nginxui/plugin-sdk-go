@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -377,5 +379,87 @@ func TestCapabilitiesOverride(t *testing.T) {
 	res := h.initialize(t)
 	if len(res.Capabilities) != 1 || res.Capabilities[0] != protocol.CapabilityHTTP {
 		t.Fatalf("capabilities = %v, want [http]", res.Capabilities)
+	}
+}
+
+func TestHostLogsListAndActivity(t *testing.T) {
+	events := make(chan protocol.EventNotification, 2)
+
+	h := newHarness(t, sdk.Plugin{
+		Events: map[string]sdk.EventHandler{
+			protocol.EventLogPathsChanged: func(_ context.Context, ev protocol.EventNotification) {
+				events <- ev
+			},
+		},
+		Methods: map[string]sdk.Handler{
+			"test.logs": func(ctx context.Context, _ json.RawMessage) (any, error) {
+				host := sdk.HostFromContext(ctx)
+				logs, err := host.LogsList(ctx)
+				if err != nil {
+					return nil, err
+				}
+				stop, err := host.Activity(ctx, "indexing", "Nginx Log Indexing...")
+				if err != nil {
+					return nil, err
+				}
+				stop()
+				return map[string]int{"logs": len(logs)}, nil
+			},
+		},
+	})
+
+	var (
+		mu       sync.Mutex
+		activity []protocol.HostActivitySetParams
+	)
+	h.host.Handle(protocol.MethodHostLogsList, func(context.Context, json.RawMessage) (any, error) {
+		return protocol.HostLogsListResult{Logs: []protocol.HostLogFile{
+			{Path: "/var/log/nginx/access.log", Type: protocol.LogTypeAccess, Source: protocol.LogSourceDefault},
+			{Path: "/var/log/nginx/a.error.log", Type: protocol.LogTypeError, Source: protocol.LogSourceConfig, ConfigFile: "/etc/nginx/a.conf"},
+		}}, nil
+	})
+	h.host.Handle(protocol.MethodHostActivitySet, func(_ context.Context, raw json.RawMessage) (any, error) {
+		var p protocol.HostActivitySetParams
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		activity = append(activity, p)
+		mu.Unlock()
+		return protocol.EmptyResult{}, nil
+	})
+
+	h.initialize(t)
+
+	var res map[string]int
+	if err := h.host.Call(t.Context(), "test.logs", nil, &res); err != nil {
+		t.Fatalf("test.logs: %v", err)
+	}
+	if res["logs"] != 2 {
+		t.Fatalf("logs = %d, want 2", res["logs"])
+	}
+
+	mu.Lock()
+	got := append([]protocol.HostActivitySetParams(nil), activity...)
+	mu.Unlock()
+	want := []protocol.HostActivitySetParams{
+		{Key: "indexing", Label: "Nginx Log Indexing...", Active: true},
+		{Key: "indexing", Label: "Nginx Log Indexing...", Active: false},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("activity = %+v, want %+v", got, want)
+	}
+
+	// An event without a handler is ignored, the subscribed one is delivered.
+	ctx := t.Context()
+	_ = h.host.Notify(ctx, protocol.MethodEventsOn, protocol.EventNotification{Type: protocol.EventCertIssued, TS: 1})
+	_ = h.host.Notify(ctx, protocol.MethodEventsOn, protocol.EventNotification{Type: protocol.EventLogPathsChanged, TS: 2})
+	select {
+	case ev := <-events:
+		if ev.Type != protocol.EventLogPathsChanged || ev.TS != 2 {
+			t.Fatalf("event = %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("log.paths_changed was not delivered")
 	}
 }

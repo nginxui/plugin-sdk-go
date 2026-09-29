@@ -81,6 +81,9 @@ type ManifestWebapp struct {
 	// Shared maps a shared runtime library to the semver range the bundle was built against.
 	Shared map[string]string `json:"shared,omitempty"`
 	Pages  []ManifestPage    `json:"pages,omitempty"`
+	// Chunks maps a chunk name to a package relative .js file the bundle
+	// loads on demand with registry.loadChunk.
+	Chunks map[string]string `json:"chunks,omitempty"`
 }
 
 // ManifestPage is a zero-build iframe page.

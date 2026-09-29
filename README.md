@@ -437,10 +437,36 @@ Returning any other Go error from a handler becomes `-32000`.
 Once `plugin.initialized` arrived, `sdk.HostFromContext(ctx)` (or
 `sdk.CurrentHost()`) returns a client for the `host.*` side of the protocol:
 `Log`, `KVGet` / `KVSet` / `KVDelete` / `KVList`, `SettingsGet`, `Locale`,
-`CredentialsGet`, `CronRegister` / `CronUnregister`, `Notify` and
-`MetricsSnapshot`. Each call needs the matching manifest permission; without it
-the host answers `-32001`. `Settings()` returns the latest settings map and
+`CredentialsGet`, `CronRegister` / `CronUnregister`, `Notify`,
+`MetricsSnapshot`, `LogsList` and `ActivitySet` (`Activity` wraps it in a
+function that clears the entry). Each call needs the matching manifest
+permission; without it the host answers `-32001`. `Settings()` returns the latest settings map and
 `Info()` the plugin id, data directory and host information.
+
+### Log files and events
+
+`LogsList` returns the nginx log files the host allows the plugin to read,
+each with `Path`, `Type` (`protocol.LogTypeAccess` or `protocol.LogTypeError`),
+`Source` and `ConfigFile`. It needs the `log.files` permission
+(`protocol.PermissionLogFiles`). Rotated files are not listed: read them next
+to a listed path. Subscribe to `log.paths_changed` in the manifest `events`
+and list again when it arrives:
+
+```go
+sdk.Serve(sdk.Plugin{
+	Events: map[string]sdk.EventHandler{
+		protocol.EventLogPathsChanged: func(ctx context.Context, _ protocol.EventNotification) {
+			logs, _ := sdk.HostFromContext(ctx).LogsList(ctx)
+			rescan(logs)
+		},
+	},
+})
+```
+
+`Plugin.Events` takes over `events.on` and ignores the types it has no handler
+for. `ActivitySet(ctx, key, label, active)` shows a background task in the host
+processing indicator. `label` is an English source string; the browser bundle
+translates it with `registerTranslations`.
 
 A cron entry, from the manifest or from `CronRegister`, names a method of the
 plugin. When it fires, the host calls that method as an ordinary request with

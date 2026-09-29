@@ -242,3 +242,36 @@ func (h *Host) MetricsSnapshot(ctx context.Context, out any) error {
 	}
 	return json.Unmarshal(res.Snapshot, out)
 }
+
+// LogsList returns the nginx log files the host allows the plugin to read.
+// Rotated files are not listed; read them next to the listed path. It needs
+// the log.files permission.
+func (h *Host) LogsList(ctx context.Context) ([]protocol.HostLogFile, error) {
+	var res protocol.HostLogsListResult
+	if err := h.call(ctx, protocol.MethodHostLogsList, nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Logs, nil
+}
+
+// ActivitySet shows or clears one entry of the host processing indicator.
+// label is an English source string the host translates, the browser bundle
+// supplies the translations. Entries are cleared when the plugin stops.
+func (h *Host) ActivitySet(ctx context.Context, key, label string, active bool) error {
+	return h.call(ctx, protocol.MethodHostActivitySet, protocol.HostActivitySetParams{
+		Key:    key,
+		Label:  label,
+		Active: active,
+	}, nil)
+}
+
+// Activity shows an indicator entry and returns the function that clears it.
+// The clear call ignores a canceled ctx so it still reaches the host.
+func (h *Host) Activity(ctx context.Context, key, label string) (stop func(), err error) {
+	if err = h.ActivitySet(ctx, key, label, true); err != nil {
+		return func() {}, err
+	}
+	return func() {
+		_ = h.ActivitySet(context.WithoutCancel(ctx), key, label, false)
+	}, nil
+}

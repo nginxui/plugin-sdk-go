@@ -28,4 +28,7 @@ const (
 	EventBackupCompleted   = "backup.completed"
 	EventAuthLoginFailed   = "auth.login_failed"
 	EventPluginChanged     = "plugin.changed"
+	// EventLogPathsChanged is sent only to plugins holding log.files. The
+	// plugin calls host.logs.list again.
+	EventLogPathsChanged = "log.paths_changed"
 )

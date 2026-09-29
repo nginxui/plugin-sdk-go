@@ -102,6 +102,11 @@ type Plugin struct {
 	// in the manifest. Lifecycle and capability method names are reserved.
 	Methods map[string]Handler
 
+	// Events handles the events the manifest subscribes to, keyed by event
+	// type, for example protocol.EventLogPathsChanged. Other event types are
+	// ignored. It takes over events.on, so Methods must not register it.
+	Events map[string]EventHandler
+
 	// Capabilities overrides the capability list reported in
 	// InitializeResult. Empty means derive it from the handlers.
 	Capabilities []string
@@ -327,6 +332,10 @@ func (rt *runtime) register() {
 	}
 	if rt.plugin.LogSink != nil {
 		rt.registerLogSink()
+	}
+
+	if len(rt.plugin.Events) > 0 {
+		rt.conn.Handle(protocol.MethodEventsOn, EventsHandler(rt.plugin.Events))
 	}
 
 	for name, h := range rt.plugin.Methods {
