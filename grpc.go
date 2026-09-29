@@ -67,6 +67,9 @@ type options struct {
 	disableGRPC bool
 	// grpcNetwork forces "unix" or "tcp". Empty picks by platform.
 	grpcNetwork string
+	// httpNetwork forces "unix" or "tcp" for the http capability listener.
+	// Empty picks by platform.
+	httpNetwork string
 }
 
 // WithoutGRPC keeps the plugin on stdio only: plugin.initialize does not
@@ -80,6 +83,12 @@ func WithoutGRPC() Option {
 // to exercise the Windows loopback path on any platform.
 func withGRPCNetwork(network string) Option {
 	return func(o *options) { o.grpcNetwork = network }
+}
+
+// withHTTPNetwork forces the http listener network, "unix" or "tcp". Tests use
+// it to exercise the Windows loopback path on any platform.
+func withHTTPNetwork(network string) Option {
+	return func(o *options) { o.httpNetwork = network }
 }
 
 func newOptions(opts []Option) options {

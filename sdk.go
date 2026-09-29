@@ -14,7 +14,8 @@
 //
 // The smallest plugin is a capability handler handed to Serve, a
 // DNS01Handler, NotifyHandler, ProbeHandler, MCPHandler, StorageHandler,
-// DeployHandler, BlocklistHandler, DiscoveryHandler or LogSinkHandler:
+// DeployHandler, BlocklistHandler, DiscoveryHandler or LogSinkHandler, or an
+// http.Handler for the http capability:
 //
 //	func main() {
 //		sdk.Serve(sdk.Plugin{DNS01: &myHandler{}})
@@ -30,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -62,6 +64,19 @@ type Handler = jsonrpc.Handler
 type Plugin struct {
 	// DNS01 serves the dns01 capability. Nil disables it.
 	DNS01 DNS01Handler
+
+	// HTTP serves the http capability with the manifest setting
+	// http.listen "unix". The SDK listens on <data dir>/http.sock (mode 0600,
+	// a stale socket is replaced), or on 127.0.0.1 with a free port reported
+	// in http_port on Windows, before it answers plugin.initialize, and shuts
+	// the server down gracefully on plugin.shutdown. The host removes its
+	// credentials from the request and identifies the user with the headers
+	// HeaderUser and HeaderUserID, see UserFromRequest. Every request has to
+	// carry the per process secret of the host in HeaderPluginSecret, the SDK
+	// answers 401 to any other and the handler never sees the header. The
+	// secret comes from EnvPluginHTTPSecret, without it the handshake fails.
+	// Nil disables it.
+	HTTP http.Handler
 
 	// Notify serves the notify capability. Nil disables it.
 	Notify NotifyHandler
@@ -122,6 +137,9 @@ func (p Plugin) capabilities() []string {
 	if p.DNS01 != nil {
 		caps = append(caps, protocol.CapabilityDNS01)
 	}
+	if p.HTTP != nil {
+		caps = append(caps, protocol.CapabilityHTTP)
+	}
 	if p.Notify != nil {
 		caps = append(caps, protocol.CapabilityNotify)
 	}
@@ -176,11 +194,16 @@ func Run(ctx context.Context, p Plugin, r io.Reader, w io.Writer, opts ...Option
 		host:    newHost(conn, envInfo()),
 		exitCh:  make(chan struct{}),
 		streams: map[string]func() streamHandler{},
+
+		// Taken now, whatever the plugin serves, so that no child process
+		// ever inherits it.
+		httpSecret: takeEnv(EnvPluginHTTPSecret),
 	}
 
 	currentHost.Store(rt.host)
 	defer currentHost.CompareAndSwap(rt.host, nil)
 	defer rt.stopGRPC()
+	defer rt.closeHTTP()
 
 	rt.register()
 
@@ -227,6 +250,13 @@ type runtime struct {
 	// grpcMu guards grpc, the optional second transport.
 	grpcMu sync.Mutex
 	grpc   *grpcTransport
+
+	// httpSecret is the secret every request to Plugin.HTTP has to carry.
+	httpSecret string
+
+	// httpMu guards httpT, the listener of Plugin.HTTP.
+	httpMu sync.Mutex
+	httpT  *httpTransport
 
 	// streams opens the handler of every streaming rpc the plugin serves,
 	// keyed by rpc name. It is filled by register and read only afterwards.
@@ -380,10 +410,51 @@ func (rt *runtime) onInitialize(_ context.Context, raw json.RawMessage) (any, er
 		Capabilities: rt.plugin.capabilities(),
 		Transports:   []string{protocol.TransportStdio},
 	}
+	if rt.plugin.HTTP != nil {
+		t, err := rt.startHTTP()
+		if err != nil {
+			return nil, Internal("http listener: " + err.Error())
+		}
+		t.advertise(&res)
+	}
 	if t := rt.startGRPC(); t != nil {
 		t.advertise(&res)
 	}
 	return res, nil
+}
+
+// startHTTP opens the http capability listener once.
+func (rt *runtime) startHTTP() (*httpTransport, error) {
+	rt.httpMu.Lock()
+	defer rt.httpMu.Unlock()
+	if rt.httpT != nil {
+		return rt.httpT, nil
+	}
+
+	t, err := startHTTP(rt.host.Info().DataDir, rt.opts.httpNetwork, rt.httpSecret, rt.plugin.HTTP)
+	if err != nil {
+		return nil, err
+	}
+	rt.httpT = t
+	return t, nil
+}
+
+// currentHTTP returns the running http listener, nil when there is none.
+func (rt *runtime) currentHTTP() *httpTransport {
+	rt.httpMu.Lock()
+	defer rt.httpMu.Unlock()
+	return rt.httpT
+}
+
+// closeHTTP ends the http listener at once and removes its socket.
+func (rt *runtime) closeHTTP() {
+	rt.httpMu.Lock()
+	t := rt.httpT
+	rt.httpT = nil
+	rt.httpMu.Unlock()
+	if t != nil {
+		t.close()
+	}
 }
 
 // startGRPC starts the gRPC transport once. It returns nil when gRPC is
@@ -452,10 +523,23 @@ func (rt *runtime) onShutdown(ctx context.Context, _ json.RawMessage) (any, erro
 	// Answer only once the capability calls still in flight are done.
 	rt.waitInflight(ctx)
 
+	// Stop taking new http requests first. The requests still running get
+	// until Plugin.Shutdown returned, which may unblock the long lived ones,
+	// plus a short grace period.
+	httpT := rt.currentHTTP()
+	if httpT != nil {
+		httpT.beginStop()
+	}
+
+	var err error
 	if rt.plugin.Shutdown != nil {
-		if err := rt.plugin.Shutdown(WithHost(ctx, rt.host)); err != nil {
-			return nil, err
-		}
+		err = rt.plugin.Shutdown(WithHost(ctx, rt.host))
+	}
+	if httpT != nil {
+		httpT.wait(ctx)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return protocol.EmptyResult{}, nil
 }

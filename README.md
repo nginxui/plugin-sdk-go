@@ -81,6 +81,7 @@ the derived list). The manifest block of each capability is described in the
 | Field | Capability | Methods | Handler |
 | --- | --- | --- | --- |
 | `DNS01` | `dns01` | `dns01.present`, `dns01.cleanup`, optional `dns01.validate`, `dns01.options`, `dns01.check` | `DNS01Handler`, plus `DNS01Validator`, `DNS01OptionsProvider`, `DNS01Checker` |
+| `HTTP` | `http` | none, a listener the host proxies to | `http.Handler` |
 | `Notify` | `notify` | `notify.send`, optional `notify.validate` | `NotifyHandler`, plus `NotifyValidator` |
 | `Probe` | `probe` | `probe.check` | `ProbeHandler` |
 | `MCP` | `mcp` | `mcp.call` | `MCPHandler`, or the ready-made `MCPTools` map |
@@ -92,6 +93,63 @@ the derived list). The manifest block of each capability is described in the
 
 An optional method the handler does not implement answers `-32002`
 (Unsupported), and the host falls back or treats it as "no opinion".
+
+### HTTP API
+
+A plugin that serves pages or an API declares the `http` capability with
+`"http": {"listen": "unix"}` in its manifest and sets `Plugin.HTTP` to any
+`http.Handler`. NGINX UI proxies `/api/plugins/<id>/http/...` to it after its
+own authentication, with WebSocket upgrades and streamed responses passing
+through.
+
+```go
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /hello", func(w http.ResponseWriter, r *http.Request) {
+		user := sdk.UserFromRequest(r)
+		fmt.Fprintf(w, "hello %s", user.Name)
+	})
+
+	sdk.Serve(sdk.Plugin{HTTP: mux})
+}
+```
+
+The SDK owns the listener, so the plugin does not open sockets itself:
+
+* On Linux and macOS it listens on the Unix socket
+  `$NGINX_UI_PLUGIN_DATA_DIR/http.sock` with mode `0600` and replaces a socket
+  left behind by a process that did not exit cleanly. The host looks for the
+  file at exactly this path, so unlike the gRPC socket there is no fallback
+  for a data directory whose path is too long (103 bytes on macOS and the
+  BSDs, 107 on Linux).
+* On Windows it listens on `127.0.0.1` with a free port and reports it as
+  `http_port` in the `plugin.initialize` reply, which is where the host reads
+  it.
+
+The listener is open before the `plugin.initialize` reply is sent. When it
+cannot be opened the reply is an internal error and the handshake fails, so the
+host shows the plugin as broken instead of proxying into nothing.
+
+On `plugin.shutdown` the server stops accepting connections at once, runs
+`Plugin.Shutdown` (use it to end long lived streams and WebSockets, which the
+server does not track), then waits up to three seconds for the requests still
+running and closes what is left. `Plugin.Capabilities` need not list `http`
+when `Plugin.HTTP` is set.
+
+The host removes the `Authorization` and `Cookie` headers and sets
+`X-Nginx-UI-User` and `X-Nginx-UI-User-ID`, which `sdk.UserFromRequest` reads.
+
+Every request also has to carry a secret. The host generates a random one for
+each process start, hands it over in `NGINX_UI_PLUGIN_HTTP_SECRET` and sends it
+in the header `X-Nginx-UI-Plugin-Secret` of every proxied request, on the Unix
+socket and on the Windows loopback port alike. The SDK reads the variable once
+at start and removes it from the environment, so child processes do not inherit
+it. It answers `401` to a request without the matching value (compared in
+constant time, WebSocket upgrades included) and takes the header off the
+request before your handler sees it. Because of that a handler can trust the
+user headers on every platform, even though any local process can reach the
+loopback port. Never log the secret. When the variable is missing the
+handshake fails with an error that names it: the host always sets it.
 
 ### Notification channels
 
@@ -482,6 +540,8 @@ through `events.on`.
 | `NGINX_UI_PLUGIN_API_VERSION` | The protocol version the host speaks |
 | `NGINX_UI_PLUGIN_DATA_DIR` | The only directory the plugin may write to |
 | `NGINX_UI_VERSION` | The host version |
+| `NGINX_UI_PLUGIN_HTTP_SECRET` | Per process secret for the `http` capability, read and removed by the SDK, see [HTTP API](#http-api) |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase) | Set only for a plugin that holds the `network` permission, and only when the host has a proxy configured. `http.ProxyFromEnvironment` and the default `http.Transport` pick them up |
 | `NGINX_UI_PLUGIN_DISABLE_GRPC` | Set to `1` to serve stdio only, like `sdk.WithoutGRPC()` |
 
 ## License
