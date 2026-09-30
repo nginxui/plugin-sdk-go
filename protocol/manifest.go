@@ -72,6 +72,10 @@ type ManifestResources struct {
 	MemoryMB int `json:"memory_mb,omitempty"`
 	// CPUPercent is CPU time in percent of one core, 100 being one core.
 	CPUPercent int `json:"cpu_percent,omitempty"`
+	// RecommendedMemoryMB is the memory in MiB the machine, or the container
+	// the host runs in, should have for the plugin to work well. It is advice
+	// for people choosing plugins, not a limit.
+	RecommendedMemoryMB int `json:"recommended_memory_mb,omitempty"`
 }
 
 // ManifestWebapp describes the optional browser bundle.
