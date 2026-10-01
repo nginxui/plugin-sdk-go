@@ -71,7 +71,7 @@ const (
 
 // Capability log.sink methods (host -> plugin). log.push is a client stream
 // on the gRPC transport only: it has no JSON-RPC form and stdio answers
-// -32601 for it (spec WIRE-12).
+// -32601 for it.
 const (
 	MethodLogPush = "log.push"
 )

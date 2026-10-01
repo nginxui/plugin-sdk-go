@@ -371,7 +371,7 @@ func (rt *runtime) register() {
 	for name, h := range rt.plugin.Methods {
 		if isStreamingRPC(name) {
 			// A streaming rpc has no JSON-RPC form, stdio keeps answering
-			// method not found for it (spec WIRE-12).
+			// method not found for it.
 			Logger.Warnf("ignoring the stdio handler for %s, a streaming rpc travels on gRPC only", name)
 			continue
 		}

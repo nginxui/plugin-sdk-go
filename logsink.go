@@ -57,7 +57,7 @@ type LogSinkHandler interface {
 }
 
 // registerLogSink serves the log.push stream. It has no stdio handler, so a
-// log.push request on stdio answers method not found (spec WIRE-12).
+// log.push request on stdio answers method not found.
 func (rt *runtime) registerLogSink() {
 	rt.streams[protocol.MethodLogPush] = func() streamHandler { return &logPushStream{rt: rt} }
 }

@@ -1,11 +1,10 @@
 package sdk
 
-// This file serves the optional gRPC transport (spec/03-wire-protocol.md
-// WIRE-11). Every gRPC call is resolved through the proto descriptors of the
-// contract to its JSON-RPC method name and runs the exact handler the stdio
-// dispatcher runs, so both transports answer identically. A client streaming
-// rpc (WIRE-12) has no stdio form: it is read until the end of the stream
-// and handed to its stream handler.
+// This file serves the optional gRPC transport. Every gRPC call is resolved
+// through the proto descriptors of the contract to its JSON-RPC method name
+// and runs the exact handler the stdio dispatcher runs, so both transports
+// answer identically. A client streaming rpc has no stdio form: it is read
+// until the end of the stream and handed to its stream handler.
 
 import (
 	"context"
@@ -539,7 +538,7 @@ func decodeRequest(md protoreflect.MessageDescriptor, in []byte) (json.RawMessag
 }
 
 // encodeResponse turns the handler result into the protobuf response. Members
-// the message does not know are dropped, as on stdio (WIRE-7).
+// the message does not know are dropped, as on stdio.
 func encodeResponse(md protoreflect.MessageDescriptor, res any) ([]byte, error) {
 	msg := dynamicpb.NewMessage(md)
 	if res != nil {
@@ -556,8 +555,7 @@ func encodeResponse(md protoreflect.MessageDescriptor, res any) ([]byte, error) 
 	return proto.Marshal(msg)
 }
 
-// grpcCodeFor maps a JSON-RPC error code onto a gRPC status code
-// (spec/03-wire-protocol.md WIRE-11).
+// grpcCodeFor maps a JSON-RPC error code onto a gRPC status code.
 func grpcCodeFor(code int) codes.Code {
 	switch code {
 	case protocol.CodeParseError, protocol.CodeInvalidRequest, protocol.CodeInvalidParams, protocol.CodeInvalidConfig:
@@ -595,7 +593,7 @@ func grpcStatus(err error, override codes.Code) error {
 }
 
 // errorData converts PluginError data to a Struct. A value that is not a JSON
-// object is wrapped as {"value": data} (spec/03-wire-protocol.md WIRE-5).
+// object is wrapped as {"value": data}.
 func errorData(data any) *structpb.Struct {
 	if data == nil {
 		return nil

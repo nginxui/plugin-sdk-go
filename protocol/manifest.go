@@ -132,7 +132,7 @@ type DNS01Provider struct {
 	Links                     *DNS01ProviderLinks `json:"links,omitempty"`
 	PropagationTimeoutSeconds int                 `json:"propagation_timeout_seconds,omitempty"`
 	PollingIntervalSeconds    int                 `json:"polling_interval_seconds,omitempty"`
-	// Form lists every value the provider accepts, see DNS01-14.
+	// Form lists every value the provider accepts.
 	Form DNS01ProviderForm `json:"form"`
 }
 
@@ -178,7 +178,7 @@ type DNS01ProviderField struct {
 // Credential fields no method lists are shown with every one. Values are
 // fixed config entries the host stores while the method is chosen. A value
 // key may also be a credential field that other methods list, never one
-// the same method lists (DNS01-16).
+// the same method lists.
 type DNS01ProviderMethod struct {
 	Name        string            `json:"name"`
 	Recommended bool              `json:"recommended,omitempty"`

@@ -76,7 +76,7 @@ Each capability is one field of `sdk.Plugin`. Setting it wires the methods of
 the capability and adds its name to the `capabilities` the plugin reports in
 the handshake, which must match the manifest (`Plugin.Capabilities` overrides
 the derived list). The manifest block of each capability is described in the
-[specification](https://github.com/nginxui/plugin-spec).
+[developer guide](https://nginxui.com/plugin/overview).
 
 | Field | Capability | Methods | Handler |
 | --- | --- | --- | --- |
@@ -380,8 +380,8 @@ func (s shipper) Push(ctx context.Context, batch []sdk.LogEntry) (int, error) {
 }
 ```
 
-The lines travel as a client stream on the gRPC transport only (spec
-WIRE-12): `log.push` has no stdio form and answers `-32601` there. Setting
+The lines travel as a client stream on the gRPC transport only:
+`log.push` has no stdio form and answers `-32601` there. Setting
 `LogSink` therefore keeps gRPC on even when `WithoutGRPC` or
 `NGINX_UI_PLUGIN_DISABLE_GRPC=1` asked for stdio only.
 
@@ -389,7 +389,7 @@ WIRE-12): `log.push` has no stdio form and answers `-32601` there. Setting
 
 Config templates and translation files need no process and no SDK: declare
 them in the manifest's `content` block and ship the files in the package.
-See `spec/17-content-plugins.md` of the specification.
+See [Templates and Translations](https://nginxui.com/plugin/capabilities/content).
 
 ## Transports
 

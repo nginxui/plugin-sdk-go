@@ -12,7 +12,7 @@ type EventHandler func(ctx context.Context, ev protocol.EventNotification)
 
 // EventsHandler returns the events.on handler that dispatches a delivered
 // event to the handler registered for its type. An event without a handler
-// is ignored, as the spec requires (HOST-15). Every call runs on its own
+// is ignored. Every call runs on its own
 // goroutine. Set Plugin.Events instead of registering it by hand.
 func EventsHandler(handlers map[string]EventHandler) Handler {
 	return func(ctx context.Context, raw json.RawMessage) (any, error) {
