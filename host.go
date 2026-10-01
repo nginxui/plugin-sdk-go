@@ -275,3 +275,72 @@ func (h *Host) Activity(ctx context.Context, key, label string) (stop func(), er
 		_ = h.ActivitySet(context.WithoutCancel(ctx), key, label, false)
 	}, nil
 }
+
+// NginxSnippetPut writes one nginx configuration snippet of the plugin. The
+// host tests the whole configuration and reloads nginx, and puts the previous
+// snippet back when nginx rejects the new one, which is reported as an
+// invalid params error. include is the directive a person adds where the
+// snippet should apply. It needs the nginx.snippet permission.
+func (h *Host) NginxSnippetPut(ctx context.Context, name, content string) (changed bool, include string, err error) {
+	var res protocol.HostNginxSnippetPutResult
+	err = h.call(ctx, protocol.MethodHostNginxSnippetPut, protocol.HostNginxSnippetPutParams{Name: name, Content: content}, &res)
+	return res.Changed, res.Include, err
+}
+
+// NginxSnippetDelete removes one snippet of the plugin the same way. A
+// snippet that is still included cannot go and is kept. It needs the
+// nginx.snippet permission.
+func (h *Host) NginxSnippetDelete(ctx context.Context, name string) (removed bool, err error) {
+	var res protocol.HostNginxSnippetDeleteResult
+	err = h.call(ctx, protocol.MethodHostNginxSnippetDelete, protocol.HostNginxSnippetDeleteParams{Name: name}, &res)
+	return res.Removed, err
+}
+
+// NginxSnippetList lists the snippets of the plugin. It needs the
+// nginx.snippet permission.
+func (h *Host) NginxSnippetList(ctx context.Context) ([]protocol.HostNginxSnippet, error) {
+	var res protocol.HostNginxSnippetListResult
+	if err := h.call(ctx, protocol.MethodHostNginxSnippetList, nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Snippets, nil
+}
+
+// NginxConfigList lists the nginx configuration files, relative to the
+// configuration directory. It needs the nginx.config.read permission.
+func (h *Host) NginxConfigList(ctx context.Context) ([]string, error) {
+	var res protocol.HostNginxConfigListResult
+	if err := h.call(ctx, protocol.MethodHostNginxConfigList, nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Files, nil
+}
+
+// NginxConfigGet reads one file NginxConfigList returns. It needs the
+// nginx.config.read permission.
+func (h *Host) NginxConfigGet(ctx context.Context, path string) (string, error) {
+	var res protocol.HostNginxConfigGetResult
+	if err := h.call(ctx, protocol.MethodHostNginxConfigGet, protocol.HostNginxConfigGetParams{Path: path}, &res); err != nil {
+		return "", err
+	}
+	return res.Content, nil
+}
+
+// SitesList lists the sites. It needs the sites.read permission.
+func (h *Host) SitesList(ctx context.Context) ([]protocol.HostSite, error) {
+	var res protocol.HostSitesListResult
+	if err := h.call(ctx, protocol.MethodHostSitesList, nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Sites, nil
+}
+
+// CertsList lists the certificates without their private keys. It needs the
+// certs.read permission.
+func (h *Host) CertsList(ctx context.Context) ([]protocol.HostCert, error) {
+	var res protocol.HostCertsListResult
+	if err := h.call(ctx, protocol.MethodHostCertsList, nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Certs, nil
+}

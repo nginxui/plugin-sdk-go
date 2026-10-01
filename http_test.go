@@ -357,8 +357,8 @@ func TestUserFromRequest(t *testing.T) {
 	if got := UserFromRequest(r); got != (protocol.HTTPUser{}) {
 		t.Fatalf("user = %+v, want zero", got)
 	}
-	r.Header.Set("x-nginx-ui-user-id", "3")
-	r.Header.Set("x-nginx-ui-user", "carol")
+	r.Header.Set("nginx-ui-user-id", "3")
+	r.Header.Set("nginx-ui-user", "carol")
 	if got := UserFromRequest(r); got.ID != "3" || got.Name != "carol" {
 		t.Fatalf("user = %+v", got)
 	}

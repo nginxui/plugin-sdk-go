@@ -83,20 +83,27 @@ const (
 
 // Host API methods (plugin -> host).
 const (
-	MethodHostLog             = "host.log"
-	MethodHostKVGet           = "host.kv.get"
-	MethodHostKVSet           = "host.kv.set"
-	MethodHostKVDelete        = "host.kv.delete"
-	MethodHostKVList          = "host.kv.list"
-	MethodHostSettingsGet     = "host.settings.get"
-	MethodHostI18nLocale      = "host.i18n.locale"
-	MethodHostCredentialsGet  = "host.credentials.get"
-	MethodHostCronRegister    = "host.cron.register"
-	MethodHostCronUnregister  = "host.cron.unregister"
-	MethodHostNotify          = "host.notify"
-	MethodHostMetricsSnapshot = "host.metrics.snapshot"
-	MethodHostLogsList        = "host.logs.list"
-	MethodHostActivitySet     = "host.activity.set"
+	MethodHostLog                = "host.log"
+	MethodHostKVGet              = "host.kv.get"
+	MethodHostKVSet              = "host.kv.set"
+	MethodHostKVDelete           = "host.kv.delete"
+	MethodHostKVList             = "host.kv.list"
+	MethodHostSettingsGet        = "host.settings.get"
+	MethodHostI18nLocale         = "host.i18n.locale"
+	MethodHostCredentialsGet     = "host.credentials.get"
+	MethodHostCronRegister       = "host.cron.register"
+	MethodHostCronUnregister     = "host.cron.unregister"
+	MethodHostNotify             = "host.notify"
+	MethodHostMetricsSnapshot    = "host.metrics.snapshot"
+	MethodHostLogsList           = "host.logs.list"
+	MethodHostActivitySet        = "host.activity.set"
+	MethodHostNginxSnippetPut    = "host.nginx.snippet.put"
+	MethodHostNginxSnippetDelete = "host.nginx.snippet.delete"
+	MethodHostNginxSnippetList   = "host.nginx.snippet.list"
+	MethodHostNginxConfigList    = "host.nginx.config.list"
+	MethodHostNginxConfigGet     = "host.nginx.config.get"
+	MethodHostSitesList          = "host.sites.list"
+	MethodHostCertsList          = "host.certs.list"
 )
 
 // Capability names a plugin may declare in its manifest.
@@ -138,6 +145,17 @@ const (
 	// PermissionLogFiles lets the plugin list the nginx log files it may read
 	// with host.logs.list and receive the log.paths_changed event.
 	PermissionLogFiles = "log.files"
+	// PermissionNginxSnippet lets a plugin write nginx configuration snippets
+	// that the host tests and reloads, with host.nginx.snippet.*.
+	PermissionNginxSnippet = "nginx.snippet"
+	// PermissionNginxConfigRead lets a plugin read the nginx configuration
+	// files with host.nginx.config.*.
+	PermissionNginxConfigRead = "nginx.config.read"
+	// PermissionSitesRead lets a plugin list the sites with host.sites.list.
+	PermissionSitesRead = "sites.read"
+	// PermissionCertsRead lets a plugin list the certificates, without their
+	// private keys, with host.certs.list.
+	PermissionCertsRead = "certs.read"
 	// PermissionCredentialsReadPrefix is followed by the credential kind, e.g. "credentials.read:dns".
 	PermissionCredentialsReadPrefix = "credentials.read:"
 )

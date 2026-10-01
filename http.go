@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -31,8 +30,8 @@ const HTTPSocketName = "http.sock"
 // Headers the host sets on every proxied request to identify the nginx-ui
 // user behind it. The host removes any value the client sent for them.
 const (
-	HeaderUser   = "X-Nginx-UI-User"
-	HeaderUserID = "X-Nginx-UI-User-ID"
+	HeaderUser   = "Nginx-UI-User"
+	HeaderUserID = "Nginx-UI-User-ID"
 )
 
 // EnvPluginHTTPSecret is the environment variable that carries the secret the
@@ -43,7 +42,7 @@ const EnvPluginHTTPSecret = "NGINX_UI_PLUGIN_HTTP_SECRET"
 // HeaderPluginSecret is the request header that carries that secret. The SDK
 // answers 401 to a request without the matching value and removes the header
 // before it hands the request to Plugin.HTTP.
-const HeaderPluginSecret = "X-Nginx-UI-Plugin-Secret"
+const HeaderPluginSecret = "Nginx-UI-Plugin-Secret"
 
 // httpReadHeaderTimeout bounds how long a client may take to send the request
 // headers.
@@ -67,9 +66,11 @@ func UserFromRequest(r *http.Request) protocol.HTTPUser {
 type httpTransport struct {
 	server   *http.Server
 	listener net.Listener
-	// socket is the Unix socket path, empty on TCP.
+	// socket is the Unix socket path, empty on a pipe or TCP.
 	socket string
-	port   int
+	// pipe is the named pipe on Windows.
+	pipe string
+	port int
 
 	// shutdownDone is closed once the graceful shutdown returned.
 	shutdownDone chan struct{}
@@ -78,16 +79,13 @@ type httpTransport struct {
 }
 
 // startHTTP opens the listener for h and starts serving in the background.
-// network is "unix" or "tcp", empty picks by platform.
+// network is "unix", "pipe" or "tcp", empty picks by platform.
 func startHTTP(dataDir, network, secret string, h http.Handler) (*httpTransport, error) {
 	if secret == "" {
 		return nil, fmt.Errorf("%s is not set, the host provides it to every plugin serving the http capability", EnvPluginHTTPSecret)
 	}
 	if network == "" {
-		network = "unix"
-		if goruntime.GOOS == "windows" {
-			network = "tcp"
-		}
+		network = defaultNetwork()
 	}
 
 	t := &httpTransport{shutdownDone: make(chan struct{})}
@@ -95,6 +93,8 @@ func startHTTP(dataDir, network, secret string, h http.Handler) (*httpTransport,
 	switch network {
 	case "unix":
 		err = t.listenUnix(dataDir)
+	case "pipe":
+		t.listener, t.pipe, err = listenPipe()
 	case "tcp":
 		err = t.listenTCP()
 	default:
@@ -196,10 +196,13 @@ func takeEnv(key string) string {
 	return value
 }
 
-// advertise adds the loopback port to the plugin.initialize reply. A Unix
-// socket needs no entry: the host takes it from the data directory.
+// advertise adds the pipe or loopback port to the plugin.initialize reply. A
+// Unix socket needs no entry: the host takes it from the data directory.
 func (t *httpTransport) advertise(res *protocol.InitializeResult) {
-	if t.socket == "" {
+	switch {
+	case t.pipe != "":
+		res.HTTPPipe = t.pipe
+	case t.socket == "":
 		res.HTTPPort = t.port
 	}
 }

@@ -122,8 +122,9 @@ The SDK owns the listener, so the plugin does not open sockets itself:
   file at exactly this path, so unlike the gRPC socket there is no fallback
   for a data directory whose path is too long (103 bytes on macOS and the
   BSDs, 107 on Linux).
-* On Windows it listens on `127.0.0.1` with a free port and reports it as
-  `http_port` in the `plugin.initialize` reply, which is where the host reads
+* On Windows it creates a named pipe under a random name that only the user
+  of the plugin may open, refusing remote clients, and reports it as
+  `http_pipe` in the `plugin.initialize` reply, which is where the host reads
   it.
 
 The listener is open before the `plugin.initialize` reply is sent. When it
@@ -137,18 +138,18 @@ running and closes what is left. `Plugin.Capabilities` need not list `http`
 when `Plugin.HTTP` is set.
 
 The host removes the `Authorization` and `Cookie` headers and sets
-`X-Nginx-UI-User` and `X-Nginx-UI-User-ID`, which `sdk.UserFromRequest` reads.
+`Nginx-UI-User` and `Nginx-UI-User-ID`, which `sdk.UserFromRequest` reads.
 
 Every request also has to carry a secret. The host generates a random one for
 each process start, hands it over in `NGINX_UI_PLUGIN_HTTP_SECRET` and sends it
-in the header `X-Nginx-UI-Plugin-Secret` of every proxied request, on the Unix
-socket and on the Windows loopback port alike. The SDK reads the variable once
+in the header `Nginx-UI-Plugin-Secret` of every proxied request, on the Unix
+socket and on the Windows named pipe alike. The SDK reads the variable once
 at start and removes it from the environment, so child processes do not inherit
 it. It answers `401` to a request without the matching value (compared in
 constant time, WebSocket upgrades included) and takes the header off the
 request before your handler sees it. Because of that a handler can trust the
-user headers on every platform, even though any local process can reach the
-loopback port. Never log the secret. When the variable is missing the
+user headers on every platform, even though other local processes may reach
+the listener. Never log the secret. When the variable is missing the
 handshake fails with an error that names it: the host always sets it.
 
 ### Notification channels
@@ -409,8 +410,8 @@ data on either transport.
   directory is unusable, the SDK uses a private directory under the system
   temp dir instead. The path is always reported in `rpc_socket`, and the
   socket is removed when the plugin exits.
-* On Windows it listens on a loopback TCP port, reported in `rpc_port`
-  together with a random `rpc_token`. Calls without the header
+* On Windows it listens on a named pipe under a random name, reported in
+  `rpc_pipe` together with a random `rpc_token`. Calls without the header
   `authorization: Bearer <rpc_token>` are rejected.
 
 To stay on stdio only, pass `sdk.WithoutGRPC()` to `Serve` or `Run`, or set
@@ -496,8 +497,10 @@ Once `plugin.initialized` arrived, `sdk.HostFromContext(ctx)` (or
 `sdk.CurrentHost()`) returns a client for the `host.*` side of the protocol:
 `Log`, `KVGet` / `KVSet` / `KVDelete` / `KVList`, `SettingsGet`, `Locale`,
 `CredentialsGet`, `CronRegister` / `CronUnregister`, `Notify`,
-`MetricsSnapshot`, `LogsList` and `ActivitySet` (`Activity` wraps it in a
-function that clears the entry). Each call needs the matching manifest
+`MetricsSnapshot`, `LogsList`, `ActivitySet` (`Activity` wraps it in a
+function that clears the entry), `NginxSnippetPut` / `NginxSnippetDelete` /
+`NginxSnippetList`, `NginxConfigList` / `NginxConfigGet`, `SitesList` and
+`CertsList`. Each call needs the matching manifest
 permission; without it the host answers `-32001`. `Settings()` returns the latest settings map and
 `Info()` the plugin id, data directory and host information.
 
@@ -525,6 +528,23 @@ sdk.Serve(sdk.Plugin{
 for. `ActivitySet(ctx, key, label, active)` shows a background task in the host
 processing indicator. `label` is an English source string; the browser bundle
 translates it with `registerTranslations`.
+
+### nginx configuration
+
+With the `nginx.snippet` permission a plugin keeps nginx configuration of its
+own. `NginxSnippetPut(ctx, name, content)` writes the snippet, and the host
+tests the whole configuration and reloads nginx. When nginx rejects it, the
+previous snippet stays and the call fails with `-32602`, carrying what nginx
+said. The call returns the `include` directive a person adds where the snippet
+should apply. A snippet that is still included cannot be deleted.
+
+```go
+changed, include, err := sdk.HostFromContext(ctx).NginxSnippetPut(ctx, "static", "expires 7d;\n")
+```
+
+`NginxConfigList` and `NginxConfigGet` (`nginx.config.read`) read the
+configuration files, `SitesList` (`sites.read`) lists the sites and
+`CertsList` (`certs.read`) the certificates, never with their private keys.
 
 A cron entry, from the manifest or from `CronRegister`, names a method of the
 plugin. When it fires, the host calls that method as an ordinary request with

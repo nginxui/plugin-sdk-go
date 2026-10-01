@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -461,5 +463,94 @@ func TestHostLogsListAndActivity(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("log.paths_changed was not delivered")
+	}
+}
+
+func TestHostNginxCalls(t *testing.T) {
+	h := newHarness(t, sdk.Plugin{
+		Methods: map[string]sdk.Handler{
+			"test.nginx": func(ctx context.Context, _ json.RawMessage) (any, error) {
+				host := sdk.HostFromContext(ctx)
+				changed, include, err := host.NginxSnippetPut(ctx, "cache", "expires 1d;\n")
+				if err != nil {
+					return nil, err
+				}
+				snippets, err := host.NginxSnippetList(ctx)
+				if err != nil {
+					return nil, err
+				}
+				removed, err := host.NginxSnippetDelete(ctx, "cache")
+				if err != nil {
+					return nil, err
+				}
+				files, err := host.NginxConfigList(ctx)
+				if err != nil {
+					return nil, err
+				}
+				content, err := host.NginxConfigGet(ctx, files[0])
+				if err != nil {
+					return nil, err
+				}
+				sites, err := host.SitesList(ctx)
+				if err != nil {
+					return nil, err
+				}
+				certs, err := host.CertsList(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{
+					"changed": changed, "include": include, "snippets": len(snippets), "removed": removed,
+					"content": content, "site": sites[0].Name, "cert": certs[0].NotAfter,
+				}, nil
+			},
+		},
+	})
+
+	var put protocol.HostNginxSnippetPutParams
+	h.host.Handle(protocol.MethodHostNginxSnippetPut, func(_ context.Context, raw json.RawMessage) (any, error) {
+		if err := json.Unmarshal(raw, &put); err != nil {
+			return nil, err
+		}
+		return protocol.HostNginxSnippetPutResult{Changed: true, Include: "include snippets/plugins/x/cache.conf;"}, nil
+	})
+	h.host.Handle(protocol.MethodHostNginxSnippetList, func(context.Context, json.RawMessage) (any, error) {
+		return protocol.HostNginxSnippetListResult{Snippets: []protocol.HostNginxSnippet{{Name: "cache"}}}, nil
+	})
+	h.host.Handle(protocol.MethodHostNginxSnippetDelete, func(context.Context, json.RawMessage) (any, error) {
+		return protocol.HostNginxSnippetDeleteResult{Removed: true}, nil
+	})
+	h.host.Handle(protocol.MethodHostNginxConfigList, func(context.Context, json.RawMessage) (any, error) {
+		return protocol.HostNginxConfigListResult{Files: []string{"nginx.conf"}}, nil
+	})
+	h.host.Handle(protocol.MethodHostNginxConfigGet, func(_ context.Context, raw json.RawMessage) (any, error) {
+		var p protocol.HostNginxConfigGetParams
+		if err := json.Unmarshal(raw, &p); err != nil || p.Path != "nginx.conf" {
+			return nil, fmt.Errorf("path = %q", p.Path)
+		}
+		return protocol.HostNginxConfigGetResult{Content: "events {}"}, nil
+	})
+	h.host.Handle(protocol.MethodHostSitesList, func(context.Context, json.RawMessage) (any, error) {
+		return protocol.HostSitesListResult{Sites: []protocol.HostSite{{Name: "a.test"}}}, nil
+	})
+	h.host.Handle(protocol.MethodHostCertsList, func(context.Context, json.RawMessage) (any, error) {
+		return protocol.HostCertsListResult{Certs: []protocol.HostCert{{NotAfter: "2026-12-01T00:00:00Z"}}}, nil
+	})
+
+	h.initialize(t)
+
+	var res map[string]any
+	if err := h.host.Call(t.Context(), "test.nginx", nil, &res); err != nil {
+		t.Fatalf("test.nginx: %v", err)
+	}
+	want := map[string]any{
+		"changed": true, "include": "include snippets/plugins/x/cache.conf;", "snippets": float64(1), "removed": true,
+		"content": "events {}", "site": "a.test", "cert": "2026-12-01T00:00:00Z",
+	}
+	if !maps.Equal(res, want) {
+		t.Fatalf("result = %v, want %v", res, want)
+	}
+	if put.Name != "cache" || put.Content != "expires 1d;\n" {
+		t.Fatalf("put = %+v", put)
 	}
 }

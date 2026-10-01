@@ -65,9 +65,10 @@ type Option func(*options)
 
 type options struct {
 	disableGRPC bool
-	// grpcNetwork forces "unix" or "tcp". Empty picks by platform.
+	// grpcNetwork forces "unix", "pipe" or "tcp". Empty picks by platform.
 	grpcNetwork string
-	// httpNetwork forces "unix" or "tcp" for the http capability listener.
+	// httpNetwork forces "unix", "pipe" or "tcp" for the http capability
+	// listener.
 	// Empty picks by platform.
 	httpNetwork string
 }
@@ -199,12 +200,15 @@ type grpcTransport struct {
 	rt       *runtime
 	server   *grpc.Server
 	listener net.Listener
-	// socket is the Unix socket path, empty on TCP.
+	// socket is the Unix socket path, empty on a pipe or TCP.
 	socket string
 	// tmpDir is the fallback directory holding socket, removed on stop.
 	tmpDir string
-	port   int
-	// token must be presented on TCP as "authorization: Bearer <token>".
+	// pipe is the named pipe on Windows.
+	pipe string
+	port int
+	// token must be presented on a pipe or TCP as "authorization: Bearer
+	// <token>".
 	token string
 
 	stopOnce sync.Once
@@ -213,10 +217,7 @@ type grpcTransport struct {
 // startGRPC opens the listener and starts serving in the background.
 func startGRPC(rt *runtime, network string) (*grpcTransport, error) {
 	if network == "" {
-		network = "unix"
-		if goruntime.GOOS == "windows" {
-			network = "tcp"
-		}
+		network = defaultNetwork()
 	}
 
 	t := &grpcTransport{rt: rt}
@@ -224,6 +225,8 @@ func startGRPC(rt *runtime, network string) (*grpcTransport, error) {
 	switch network {
 	case "unix":
 		err = t.listenUnix(rt.host.Info().DataDir)
+	case "pipe":
+		err = t.listenPipe()
 	case "tcp":
 		err = t.listenTCP()
 	default:
@@ -314,9 +317,24 @@ func (t *grpcTransport) listenOn(path string) error {
 	return nil
 }
 
+func (t *grpcTransport) listenPipe() error {
+	token, err := newToken()
+	if err != nil {
+		return err
+	}
+	l, name, err := listenPipe()
+	if err != nil {
+		return err
+	}
+	t.listener = l
+	t.pipe = name
+	t.token = token
+	return nil
+}
+
 func (t *grpcTransport) listenTCP() error {
-	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
+	token, err := newToken()
+	if err != nil {
 		return err
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -325,18 +343,31 @@ func (t *grpcTransport) listenTCP() error {
 	}
 	t.listener = l
 	t.port = l.Addr().(*net.TCPAddr).Port
-	t.token = hex.EncodeToString(token)
+	t.token = token
 	return nil
+}
+
+// newToken returns the random token the host presents on a pipe or port.
+func newToken() (string, error) {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(token), nil
 }
 
 // advertise adds the transport to the plugin.initialize reply.
 func (t *grpcTransport) advertise(res *protocol.InitializeResult) {
 	res.Transports = append(res.Transports, protocol.TransportGRPC)
-	if t.socket != "" {
+	switch {
+	case t.socket != "":
 		res.RPCSocket = t.socket
 		return
+	case t.pipe != "":
+		res.RPCPipe = t.pipe
+	default:
+		res.RPCPort = t.port
 	}
-	res.RPCPort = t.port
 	res.RPCToken = t.token
 }
 
