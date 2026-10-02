@@ -20,9 +20,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -43,12 +43,12 @@ jobs:
     name: pb/ matches nginxui/plugin-spec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: plugin-sdk-go
 
       # pb/regen.sh looks for the spec checkout next to this repository.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: nginxui/plugin-spec
           path: plugin-spec
